@@ -1,0 +1,4 @@
+﻿origin_id,destination_id,industry_A,industry_B,tons
+AA,BB,10,20,30
+AA,CC,40,50,90
+BB,DD,60,70,130
