@@ -1,0 +1,24 @@
+[project]
+name = "transport-flow-model"
+dynamic = ["version"]
+description = "Transport flow model"
+readme = "README.md"
+authors = [
+    { name = "Raghav Pant", email = "raghav.pant@ouce.ox.ac.uk" },
+    { name = "Tom Russell", email = "tom.russell@ouce.ox.ac.uk" },
+]
+requires-python = ">=3.12"
+dependencies = ["igraph", "geopandas", "pandas", "pyarrow", "tqdm"]
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/transport_flow_model/_version.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["/src"]

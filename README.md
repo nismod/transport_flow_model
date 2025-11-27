@@ -5,4 +5,7 @@ The model assumes flows along edges without constrains, till they reach capacity
 
 To run the model:
 
-	Modify inputs and run script flow_allocation.py 
+```bash
+pip install -e .
+python scripts/flow_model/flow_allocation.py ./config.example.json
+```

@@ -5,6 +5,7 @@ data/*
 incoming_data/*
 figures/*
 processed_data/*
+example/results/*
 .bak/*
 
 # Editor config
@@ -20,6 +21,7 @@ __pycache__
 *.pyd
 *.pyc
 .ipynb_checkpoints
+_version.py
 
 # Docs
 docs/_build
