@@ -123,7 +123,7 @@ if __name__ == "__main__":
         prog="flow_allocation",
         description="Allocate origin-destination flows to a network",
     )
-    parser.add_argument("config")
+    parser.add_argument("config", help="Path to config.json")
     args = parser.parse_args()
     CONFIG = load_config(args.config)
     main(CONFIG)
