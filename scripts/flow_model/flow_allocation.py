@@ -82,12 +82,14 @@ def main(config):
     ########################
 
     # Store network dataframe with final flows
-    n_df.to_csv(os.path.join(results_folder, "network_edge_total_flows.csv"))
+    n_df.to_csv(
+        os.path.join(results_folder, "network_edge_total_flows.csv"), index=False
+    )
     # Store unassinged OD flows
     if len(unassigned_routes) > 0:
         unassigned_routes = pd.concat(unassigned_routes, axis=0, ignore_index=True)
         unassigned_routes.to_csv(
-            os.path.join(results_folder, "unassigned_od_flows.csv")
+            os.path.join(results_folder, "unassigned_od_flows.csv"), index=False
         )
 
     if len(flow_routes) > 0:
