@@ -29,8 +29,8 @@ def get_flow_paths_indexes_and_edges_dataframe(
         path = getattr(v, path_criteria)
         edge_path_index += list(zip(path, [v.Index] * len(path)))
     del flow_dataframe
-    return pd.DataFrame(edge_path_index, columns=[id_column, "path_index"])
-
+    edge_path_index = pd.DataFrame(edge_path_index,columns=[id_column,"path_index"])
+    return edge_path_index.set_index(id_column)
 
 def find_minimal_flows_along_overcapacity_paths(
     over_capacity_ods,
@@ -567,3 +567,68 @@ def od_flow_allocation_capacity_constrained(
                     flow_ods = pd.DataFrame()
 
     return capacity_ods, unassigned_paths, network_dataframe
+
+def get_path_indexes_for_edges_dataframe(edge_ids_with_paths,selected_edge_list,path_index_column="path_index"):
+    return list(
+                set(
+                    flatten(edge_ids_with_paths[edge_ids_with_paths.index.isin(selected_edge_list)][path_index_column].values.tolist())
+                    )
+                )
+
+def flow_disruption_estimation(network_dataframe, edge_failure_set,
+    flow_dataframe,edge_flow_path_indexes,edge_id_column,flow_column,cost_column,attribute_list=None):
+    """Estimate network impacts of each failures
+    When the tariff costs of each path are fixed by vehicle weight
+
+    Parameters
+    ---------
+    network_df_in - Pandas DataFrame of network
+    edge_failure_set - List of string edge ID's
+    flow_dataframe - Pandas DataFrame of list of edge paths
+    path_column - String name of column of edge paths in flow dataframe
+    tons_column - String name of column of path tons in flow dataframe
+    cost_column - String name of column of path costs in flow dataframe
+    time_column - String name of column of path travel time in flow dataframe
+
+
+    Returns
+    -------
+    edge_failure_dictionary : list[dict]
+        With attributes
+        edge_id - String name or list of failed edges
+        origin - String node ID of Origin of disrupted OD flow
+        destination - String node ID of Destination of disrupted OD flow
+        no_access - Boolean 1 (no reroutng) or 0 (rerouting)
+        new_cost - Float value of estimated cost of OD journey after disruption
+        new_distance - Float value of estimated distance of OD journey after disruption
+        new_path - List of string edge ID's of estimated new route of OD journey after disruption
+        new_time - Float value of estimated time of OD journey after disruption
+    """
+    # edge_path_index = get_path_indexes_for_edges(edge_flow_path_indexes,edge_failure_set)
+    edge_path_index = get_path_indexes_for_edges_dataframe(edge_flow_path_indexes,edge_failure_set)
+    select_flows = flow_dataframe[flow_dataframe.index.isin(edge_path_index)]
+    del edge_path_index
+
+    """Find the flows in the disrupted edges 
+    """
+    affected_flows = get_flow_on_edges(select_flows,edge_id_column,"edge_path",flow_column)
+    affected_flows.rename(columns={flow_column:"affected_flows"},inplace=True)
+    network_df_in = network_dataframe.copy()
+    network_df_in = pd.merge(network_df_in,affected_flows,how='left',on=[edge_id_column])
+    network_df_in['affected_flows'].fillna(0,inplace=True)
+    network_df_in[flow_column] = network_df_in[flow_column] - network_df_in['affected_flows']
+    network_df_in.drop('affected_flows',axis=1,inplace=True)
+    del affected_flows
+
+    affected_flows =  select_flows.copy()
+    affected_flows.drop("edge_path",axis=1,inplace=True)
+    affected_flows.rename(columns={cost_column:f"old_{cost_column}"},inplace=True)
+    if attribute_list is not None:
+        affected_flows.rename(columns=dict([(c,f"old_{c}") for c in attribute_list]),inplace=True)
+    reassinged_flows, no_flows, _ = od_flow_allocation_capacity_constrained(affected_flows,
+                                    network_df_in[~network_df_in[edge_id_column].isin(edge_failure_set)],
+                                    flow_column,cost_column,edge_id_column,attribute_list=attribute_list,
+                                    store_edge_path=False)
+    del network_df_in, affected_flows
+    
+    return reassinged_flows, no_flows
