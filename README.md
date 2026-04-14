@@ -11,3 +11,7 @@ To run the model:
 pip install -e .
 python scripts/flow_model/flow_allocation.py ./config.example.json
 ```
+
+## Acknowledgments
+
+This research received funding from the UK FCDO Climate Compatible Growth Programme. The views expressed here do not necessarily reflect the UK government's official policies.
