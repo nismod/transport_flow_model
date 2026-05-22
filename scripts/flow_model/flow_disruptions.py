@@ -2,22 +2,17 @@
 # coding: utf-8
 """Disruption model for rerouting and flow isolation analysis"""
 
-import sys
 import os
-
 import pandas as pd
-import geopandas as gpd
-import duckdb
 
-pd.options.mode.chained_assignment = None
-warnings.simplefilter(action="ignore", category=FutureWarning)
-warnings.simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
-import numpy as np
-from transport_flow_model.flow_utils import *
+from transport_flow_model.flow_utils import (
+    flow_disruption_estimation,
+    get_flow_paths_indexes_and_edges_dataframe,
+    load_config,
+)
 
 
 def main(config):
-    incoming_data_path = config["paths"]["incoming_data"]
     processed_data_path = config["paths"]["processed_data"]
     results_data_path = config["paths"]["results"]
 
@@ -29,7 +24,7 @@ def main(config):
     #     OD Inputs      #
     ######################
     # Specify flow OD data path
-    flow_od_folder = os.path.join(output_data_path, "/path_to_OD_data/")
+    flow_od_folder = os.path.join(results_data_path, "/path_to_OD_data/")
     # Specify path of network dataframe with the pre-disruption flows
     network_flow_folder = os.path.join(
         processed_data_path, "/path_to_network_data_with_flows/"
@@ -38,7 +33,7 @@ def main(config):
     # Specify the names of the important columns in the pre-disruption OD file
     flow_column = "total_tons"  # Total tons column
     flow_value = "total_value_euro"  # Total flow value column in some monetory unit
-    flow_value_columns["list of commodity specific columns with Euro values"] + [
+    flow_value_columns = ["list of commodity specific columns with Euro values"] + [
         flow_value
     ]
     network_id_column = "id"  # The ID column of the network edge file
@@ -50,11 +45,11 @@ def main(config):
     time_column = "time_hr"  # Include this if there is interest in estimating new time
     network_attribute_columns = [distance_column, time_column]
     if network_attribute_columns is not None:
-        rerouting_columns = [f"rerouting_{cost_column}"] + [
+        rerouting_loss_columns = [f"rerouting_{cost_column}"] + [
             "rerouting_{c}" for c in network_attribute_columns
         ]
     else:
-        rerouting_columns = [f"rerouting_{cost_column}"]
+        rerouting_loss_columns = [f"rerouting_{cost_column}"]
     # Get all the relevant columns in the OD file
     od_columns = [
         "origin_id",
@@ -68,13 +63,7 @@ def main(config):
     od_flows_file = os.path.join(flow_od_folder)
     edge_flows_file = os.path.join(network_flow_folder)
 
-    od_file_size = "large"
-    if od_file_size == "large":
-        # OPTION 1 - Use DUCKDB to read OD file if it is very large
-        flow_df = duckdb.query(f'SELECT * FROM "{od_flows_file}";').df()
-    else:
-        # OR read OD file as geoparquet directly
-        flow_df = pd.read_parquet(od_flows_file)
+    flow_df = pd.read_parquet(od_flows_file)
 
     network_df = pd.read_parquet(edge_flows_file)
 
@@ -129,8 +118,8 @@ def main(config):
                     rf[f"rerouting_{cost_column}"] = (
                         rf[cost_column] - rf[f"old_{cost_column}"]
                     ) * rf[flow_column]
-                    if attribute_list is not None:
-                        for attr_l in attribute_list:
+                    if network_attribute_columns is not None:
+                        for attr_l in network_attribute_columns:
                             rf[f"rerouting_{attr_l}"] = rf[attr_l] - rf[f"old_{attr_l}"]
 
                     rerouting_loss.append(rf[[rerouting_loss_columns]].sum(axis=0))
