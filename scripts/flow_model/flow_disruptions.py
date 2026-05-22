@@ -51,7 +51,7 @@ def main(config):
     else:
         rerouting_loss_columns = [f"rerouting_{cost_column}"]
     # Get all the relevant columns in the OD file
-    od_columns = [
+    od_columns = [  # noqa - unused for now
         "origin_id",
         "destination_id",
         edge_path_column,
@@ -95,7 +95,7 @@ def main(config):
     for row in failure_edges.itertuples():
         fail_edges = getattr(row, failure_id_column)
         # Convert to list if only single edge
-        if isinstance(fail_edges, list) == False:
+        if not isinstance(fail_edges, list):
             fail_edges = [fail_edges]
 
         if network_df[network_df["id"].isin(fail_edges)][flow_column].sum() > 0:
