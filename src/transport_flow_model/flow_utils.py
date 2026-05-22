@@ -21,24 +21,20 @@ def load_config(config_path=None):
     return config
 
 
-def get_flow_paths_indexes_and_edges_dataframe(
-    flow_dataframe, path_criteria, id_column="id"
-):
+def get_flow_paths_indexes_and_edges_dataframe(flow_dataframe, path_criteria):
     edge_path_index = []
     for v in flow_dataframe.itertuples():
         path = getattr(v, path_criteria)
         edge_path_index += list(zip(path, [v.Index] * len(path)))
     del flow_dataframe
-    edge_path_index = pd.DataFrame(edge_path_index,columns=[id_column,"path_index"])
-    return edge_path_index.set_index(id_column)
+    edge_path_index = pd.DataFrame(edge_path_index,columns=["edge_id","path_index"])
+    return edge_path_index.set_index("edge_id")
 
 def find_minimal_flows_along_overcapacity_paths(
     over_capacity_ods,
     network_dataframe,
     over_capacity_edges,
     edge_id_paths,
-    edge_id_column,
-    flow_column,
 ):
     """
     Parameters
@@ -51,11 +47,6 @@ def find_minimal_flows_along_overcapacity_paths(
         List of over capacity edges
     edge_id_paths: Dictionary
         List of OD dataframe indexes for paths which are overcapacity
-    edge_id_column: str
-        Name of the edge ID column
-    flow_column: str
-        Name of flow column
-
     Returns
     -------
     over_capacity_ods : pandas.DataFrame
@@ -67,18 +58,18 @@ def find_minimal_flows_along_overcapacity_paths(
             for path_key, path_idx in edge_id_paths.items()
             if path_key in over_capacity_edges
         ],
-        columns=[edge_id_column, "path_indexes"],
+        columns=["edge_id", "path_indexes"],
     )
     over_capacity_edges_df = pd.merge(
         over_capacity_edges_df,
-        network_dataframe[[edge_id_column, "residual_capacity", "added_flow"]],
+        network_dataframe[["edge_id", "residual_capacity", "added_flow"]],
         how="left",
-        on=[edge_id_column],
+        on=["edge_id"],
     )
     over_capacity_edges_df["edge_path_flow"] = over_capacity_edges_df.progress_apply(
         lambda x: over_capacity_ods[
             over_capacity_ods.path_indexes.isin(x.path_indexes)
-        ][flow_column].values,
+        ].flow.values,
         axis=1,
     )
     over_capacity_edges_df["edge_path_flow_cor"] = (
@@ -104,7 +95,7 @@ def find_minimal_flows_along_overcapacity_paths(
     )
     del min_flows, over_capacity_edges_df
     over_capacity_ods["residual_flows"] = (
-        over_capacity_ods[flow_column] - over_capacity_ods["min_flows"]
+        over_capacity_ods.flow - over_capacity_ods["min_flows"]
     )
 
     return over_capacity_ods
@@ -162,41 +153,31 @@ def get_flow_paths_indexes_of_edges(flow_dataframe, path_criteria):
     return edge_path_index
 
 
-def get_flow_on_edges(save_paths_df, edge_id_column, edge_path_column, flow_column):
+def get_flow_on_edges(save_paths_df):
     """
     Parameters
     ---------
     save_paths_df: pandas.Dataframe
         Pandas DataFrame of OD flow paths and their flows
-    edge_id_column: str
-        Name of the edge ID column
-    edge_path_column: str
-        Name of Edge PAth column - General edge_path
-    flow_column: str
-        Name of flow column
-
     Returns
     -------
     network_df : pandas.DataFrame
-        - edge_id_column - Column of Edge IDs
-        - flow_column - Column of total flow values along each edge
+        - edge_id - Column of Edge IDs
+        - flow - Column of total flow values along each edge
     """
     edge_flows = defaultdict(float)
     for row in save_paths_df.itertuples():
-        for item in getattr(row, edge_path_column):
-            edge_flows[item] += getattr(row, flow_column)
+        for item in getattr(row, "edge_path"):
+            edge_flows[item] += row.flow
 
     return pd.DataFrame(
-        [(k, v) for k, v in edge_flows.items()], columns=[edge_id_column, flow_column]
+        [(k, v) for k, v in edge_flows.items()], columns=["edge_id", "flow"]
     )
 
 
 def update_flow_and_overcapacity(
     od_dataframe,
     network_dataframe,
-    flow_column,
-    edge_id_column="id",
-    network_capacity_column="capacity",
     subtract=False,
 ):
     """
@@ -206,12 +187,6 @@ def update_flow_and_overcapacity(
         Pandas DataFrame of OD flow paths and their flows
     network_dataframe: pandas.Dataframe
         Pandas DataFrame of network edges with existing flows and capacities
-    flow_column: str
-        Name of flow column that we want to compare to capacity
-    edge_id_column: str
-        Name of the edge ID column
-    network_capacity_column: str
-        Name of network capacity column
     substract: Boolean
         False to add True to subtract
 
@@ -220,29 +195,27 @@ def update_flow_and_overcapacity(
     network_dataframe : pandas.DataFrame
         - With updates value of flows and over capacity estimations
     """
-    edge_flows = get_flow_on_edges(
-        od_dataframe, edge_id_column, "edge_path", flow_column
-    )
-    edge_flows.rename(columns={flow_column: "added_flow"}, inplace=True)
+    edge_flows = get_flow_on_edges(od_dataframe)
+    edge_flows.rename(columns={"flow": "added_flow"}, inplace=True)
     network_dataframe = pd.merge(
-        network_dataframe, edge_flows, how="left", on=[edge_id_column]
+        network_dataframe, edge_flows, how="left", on=["edge_id"]
     ).fillna(0)
     del edge_flows
     if subtract is True:
-        network_dataframe[flow_column] = (
-            network_dataframe[flow_column] - network_dataframe["added_flow"]
+        network_dataframe.flow = (
+            network_dataframe.flow - network_dataframe["added_flow"]
         )
     else:
-        network_dataframe[flow_column] += network_dataframe["added_flow"]
+        network_dataframe.flow += network_dataframe["added_flow"]
     network_dataframe["over_capacity"] = (
-        network_dataframe[network_capacity_column] - network_dataframe[flow_column]
+        network_dataframe.capacity - network_dataframe.flow
     )
 
     return network_dataframe
 
 
 def network_od_path_estimations_multiattribute(
-    graph, source, target, cost_criteria, path_id_column, attribute_list=None
+    graph, source, target, attribute_list=None
 ):
     """Estimate the paths, distances, times, and costs for given OD pair
 
@@ -254,10 +227,6 @@ def network_od_path_estimations_multiattribute(
         String/Float/Integer name of Origin node ID
     target
         String/Float/Integer name of Destination node ID
-    cost_criteria : str
-        name of generalised cost criteria to be used: gcost
-    path_id_column: str
-        name of ID column for getting the edge path
     attribute_list: list
         list of names of columns whose values need to be added up
 
@@ -267,30 +236,27 @@ def network_od_path_estimations_multiattribute(
         Dataframe with the path attributes
 
     """
-    paths = graph.get_shortest_paths(
-        source, target, weights=cost_criteria, output="epath"
-    )
+    paths = graph.get_shortest_paths(source, target, weights="cost", output="epath")
 
     paths_list = []
     if attribute_list is None:
         for path in paths:
-            path_dict = {"edge_path": [], cost_criteria: 0}
+            path_dict = {"edge_path": [], "cost": 0}
             if path:
                 for n in path:
-                    path_dict["edge_path"].append(graph.es[n][path_id_column])
-                    path_dict[cost_criteria] += graph.es[n][cost_criteria]
+                    path_dict["edge_path"].append(graph.es[n]["edge_id"])
+                    path_dict["cost"] += graph.es[n]["cost"]
 
             paths_list.append(path_dict)
     else:
         for path in paths:
             path_dict = dict(
-                [("edge_path", []), (cost_criteria, 0)]
-                + [(a, 0) for a in attribute_list]
+                [("edge_path", []), ("cost", 0)] + [(a, 0) for a in attribute_list]
             )
             if path:
                 for n in path:
-                    path_dict["edge_path"].append(graph.es[n][path_id_column])
-                    path_dict[cost_criteria] += graph.es[n][cost_criteria]
+                    path_dict["edge_path"].append(graph.es[n]["edge_id"])
+                    path_dict["cost"] += graph.es[n]["cost"]
                     for a in attribute_list:
                         path_dict[a] += graph.es[n][a]
 
@@ -302,10 +268,6 @@ def network_od_path_estimations_multiattribute(
 def network_od_paths_assembly_multiattributes(
     points_dataframe,
     graph,
-    cost_criteria,
-    path_id_column,
-    origin_id_column,
-    destination_id_column,
     attribute_list=None,
     store_edge_path=True,
 ):
@@ -317,14 +279,6 @@ def network_od_paths_assembly_multiattributes(
         OD nodes and their tonnages
     graph
         igraph network structure
-    cost_criteria : str
-        name of generalised cost criteria to be used: gcost
-    path_id_column: str
-        name of ID column for getting the edge path
-    origin_id_column: str
-        name of Origin node ID column
-    destination_id_column: str
-        name of Destination node ID column
     attribute_list: list
         list of names of columns whose values need to be added up
     store_edge_path: Boolean
@@ -336,38 +290,29 @@ def network_od_paths_assembly_multiattributes(
         - origin - String node ID of Origin
         - destination - String node ID of Destination
         - edge_path - List of string of edge ID's for paths with minimum generalised cost flows
-        - cost_criteria - Float values of estimated generalised cost for paths with minimum generalised cost flows
+        - cost - Float values of estimated generalised cost for paths with minimum generalised cost flows
         - attribute_list - Float values of estimated values for paths with minimum generalised cost flows
 
     """
-    save_paths_df = []
-    points_dataframe = points_dataframe.set_index(origin_id_column)
+    save_paths_dfs = []
+    points_dataframe = points_dataframe.set_index("origin_id")
     origins = list(set(points_dataframe.index.values.tolist()))
     for origin in origins:
-        try:
-            destinations = list(
-                set(
-                    points_dataframe.loc[
-                        [origin], destination_id_column
-                    ].values.tolist()
-                )
-            )
+        destinations = list(
+            set(points_dataframe.loc[[origin], "destination_id"].values.tolist())
+        )
 
-            get_path_df = network_od_path_estimations_multiattribute(
-                graph,
-                origin,
-                destinations,
-                cost_criteria,
-                path_id_column,
-                attribute_list=attribute_list,
-            )
-            get_path_df[origin_id_column] = origin
-            get_path_df[destination_id_column] = destinations
-            save_paths_df.append(get_path_df)
-        except:
-            print(f"* no path between {origin}-{destinations}")
+        get_path_df = network_od_path_estimations_multiattribute(
+            graph,
+            origin,
+            destinations,
+            attribute_list=attribute_list,
+        )
+        get_path_df["origin_id"] = origin
+        get_path_df["destination_id"] = destinations
+        save_paths_dfs.append(get_path_df)
 
-    save_paths_df = pd.concat(save_paths_df, axis=0, ignore_index=True)
+    save_paths_df = pd.concat(save_paths_dfs, axis=0, ignore_index=True)
     if store_edge_path is False:
         save_paths_df.drop("edge_path", axis=1, inplace=True)
 
@@ -376,9 +321,9 @@ def network_od_paths_assembly_multiattributes(
         points_dataframe,
         save_paths_df,
         how="left",
-        on=[origin_id_column, destination_id_column],
+        on=["origin_id", "destination_id"],
     ).fillna(0)
-    save_paths_df = save_paths_df[save_paths_df[origin_id_column] != 0]
+    save_paths_df = save_paths_df[save_paths_df.origin_id != 0]
 
     return save_paths_df
 
@@ -408,20 +353,14 @@ def create_igraph_from_dataframe(graph_dataframe, directed=False, simple=False):
 def od_flow_allocation_capacity_constrained(
     flow_ods,
     network_dataframe,
-    flow_column,
-    cost_column,
-    path_id_column,
     attribute_list=None,
-    origin_id_column="origin_id",
-    destination_id_column="destination_id",
     over_capacity_threshold=1.0e-3,
-    network_capacity_column="capacity",
     directed=False,
     simple=False,
     store_edge_path=True,
 ):
     network_dataframe["over_capacity"] = (
-        network_dataframe[network_capacity_column] - network_dataframe[flow_column]
+        network_dataframe.capacity - network_dataframe.flow
     )
     capacity_ods = []
     unassigned_paths = []
@@ -437,28 +376,24 @@ def od_flow_allocation_capacity_constrained(
         unassigned_paths.append(
             flow_ods[
                 ~(
-                    (flow_ods[origin_id_column].isin(graph_nodes))
-                    & (flow_ods[destination_id_column].isin(graph_nodes))
+                    (flow_ods.origin_id.isin(graph_nodes))
+                    & (flow_ods.destination_id.isin(graph_nodes))
                 )
             ]
         )
         flow_ods = flow_ods[
-            (flow_ods[origin_id_column].isin(graph_nodes))
-            & (flow_ods[destination_id_column].isin(graph_nodes))
+            (flow_ods.origin_id.isin(graph_nodes))
+            & (flow_ods.destination_id.isin(graph_nodes))
         ]
         if len(flow_ods.index) > 0:
             flow_ods = network_od_paths_assembly_multiattributes(
                 flow_ods,
                 graph,
-                cost_column,
-                path_id_column,
-                origin_id_column,
-                destination_id_column,
                 attribute_list=attribute_list,
                 store_edge_path=store_edge_path,
             )
-            unassigned_paths.append(flow_ods[flow_ods[cost_column] == 0])
-            flow_ods = flow_ods[flow_ods[cost_column] > 0]
+            unassigned_paths.append(flow_ods[flow_ods.cost == 0])
+            flow_ods = flow_ods[flow_ods.cost > 0]
             if len(flow_ods.index) > 0:
                 network_dataframe["residual_capacity"] = network_dataframe[
                     "over_capacity"
@@ -466,13 +401,10 @@ def od_flow_allocation_capacity_constrained(
                 network_dataframe = update_flow_and_overcapacity(
                     flow_ods,
                     network_dataframe,
-                    flow_column,
-                    edge_id_column=path_id_column,
-                    network_capacity_column=network_capacity_column,
                 )
                 over_capacity_edges = network_dataframe[
                     network_dataframe["over_capacity"] < -1.0 * over_capacity_threshold
-                ][path_id_column].values.tolist()
+                ].edge_id.values.tolist()
                 if len(over_capacity_edges) > 0:
                     edge_id_paths = get_flow_paths_indexes_of_edges(
                         flow_ods, "edge_path"
@@ -503,16 +435,14 @@ def od_flow_allocation_capacity_constrained(
                         network_dataframe,
                         over_capacity_edges,
                         edge_id_paths,
-                        path_id_column,
-                        flow_column,
                     )
                     cap_ods = over_capacity_ods.copy()
                     cap_ods.drop(
-                        ["path_indexes", flow_column, "residual_flows"],
+                        ["path_indexes", "flow", "residual_flows"],
                         axis=1,
                         inplace=True,
                     )
-                    cap_ods.rename(columns={"min_flows": flow_column}, inplace=True)
+                    cap_ods.rename(columns={"min_flows": "flow"}, inplace=True)
                     if store_edge_path is False:
                         cap_ods.drop(["edge_path"], axis=1, inplace=True)
 
@@ -520,23 +450,19 @@ def od_flow_allocation_capacity_constrained(
                     del cap_ods
 
                     over_capacity_ods["residual_ratio"] = (
-                        over_capacity_ods["residual_flows"]
-                        / over_capacity_ods[flow_column]
+                        over_capacity_ods["residual_flows"] / over_capacity_ods.flow
                     )
                     over_capacity_ods.drop(
-                        ["path_indexes", flow_column, "min_flows"], axis=1, inplace=True
+                        ["path_indexes", "flow", "min_flows"], axis=1, inplace=True
                     )
                     over_capacity_ods.rename(
-                        columns={"residual_flows": flow_column}, inplace=True
+                        columns={"residual_flows": "flow"}, inplace=True
                     )
 
                     network_dataframe.drop("added_flow", axis=1, inplace=True)
                     network_dataframe = update_flow_and_overcapacity(
                         over_capacity_ods,
                         network_dataframe,
-                        flow_column,
-                        path_id_column,
-                        network_capacity_column=network_capacity_column,
                         subtract=True,
                     )
                     network_dataframe.drop("added_flow", axis=1, inplace=True)
@@ -545,14 +471,13 @@ def od_flow_allocation_capacity_constrained(
                     ]  # This is to stop the OD assignment if say 99% of flow is assigned
                     if attribute_list is not None:
                         flow_ods.drop(
-                            ["edge_path", cost_column, "residual_ratio"]
-                            + attribute_list,
+                            ["edge_path", "cost", "residual_ratio"] + attribute_list,
                             axis=1,
                             inplace=True,
                         )
                     else:
                         flow_ods.drop(
-                            ["edge_path", cost_column, "residual_ratio"],
+                            ["edge_path", "cost", "residual_ratio"],
                             axis=1,
                             inplace=True,
                         )
@@ -565,8 +490,8 @@ def od_flow_allocation_capacity_constrained(
                         ["residual_capacity", "added_flow"], axis=1, inplace=True
                     )
                     flow_ods = pd.DataFrame()
-
-    return capacity_ods, unassigned_paths, network_dataframe
+    flow_routes = pd.concat(capacity_ods)
+    return flow_routes, unassigned_paths, network_dataframe
 
 def get_path_indexes_for_edges_dataframe(edge_ids_with_paths,selected_edge_list,path_index_column="path_index"):
     return list(
