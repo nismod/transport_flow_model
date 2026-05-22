@@ -25,3 +25,6 @@ _version.py
 
 # Docs
 docs/_build
+# pixi environments
+.pixi/*
+!.pixi/config.toml

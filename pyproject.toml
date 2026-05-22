@@ -10,6 +10,9 @@ authors = [
 requires-python = ">=3.12"
 dependencies = ["igraph", "geopandas", "pandas", "pyarrow", "tqdm"]
 
+[dependency-groups]
+dev = ["black", "mypy", "pytest", "pytest-cov", "ruff"]
+
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
@@ -22,3 +25,16 @@ version-file = "src/transport_flow_model/_version.py"
 
 [tool.hatch.build.targets.sdist]
 include = ["/src"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[tool.pixi.pypi-dependencies]
+transport-flow-model = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+test = "python -m pytest tests"
+
+[tool.pixi.environments]
+default = ["dev"]
