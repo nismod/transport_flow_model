@@ -10,6 +10,7 @@ To run the model:
 ```bash
 pip install -e .
 python scripts/flow_model/flow_allocation.py ./config.example.json
+python scripts/flow_model/flow_disruptions.py ./config.example.json
 ```
 
 ## Development
@@ -36,6 +37,7 @@ dev` to include it in the `pyproject.toml` `[dependency-groups] dev` table:
 ```bash
 pixi add --pypi --feature dev pytest
 ```
+
 ## Acknowledgments
 
 This research received funding from the UK FCDO Climate Compatible Growth

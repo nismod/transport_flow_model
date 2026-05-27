@@ -1,4 +1,5 @@
 ﻿from_id,to_id,id,flow_capacity,gcost_usd_per_ton,length_m,time_hr
-AA,CC,XX,400,20,100,2
+AA,CC,XX,100,20,100,2
 CC,BB,YY,100,10,50,1
 BB,DD,ZZ,50,5,20,1
+BB,DD,AA,100,50,200,10

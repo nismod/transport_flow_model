@@ -271,7 +271,6 @@ def network_od_paths_assembly_multiattributes(
     points_dataframe,
     graph,
     attribute_list=None,
-    store_edge_path=True,
 ):
     """Assemble estimates of OD paths, distances, times, costs and tonnages on networks
 
@@ -283,8 +282,6 @@ def network_od_paths_assembly_multiattributes(
         igraph network structure
     attribute_list: list
         list of names of columns whose values need to be added up
-    store_edge_path: Boolean
-        True if the edge path is to be stored. False otherwise
 
     Returns
     -------
@@ -315,8 +312,6 @@ def network_od_paths_assembly_multiattributes(
         save_paths_dfs.append(get_path_df)
 
     save_paths_df = pd.concat(save_paths_dfs, axis=0, ignore_index=True)
-    if store_edge_path is False:
-        save_paths_df.drop("edge_path", axis=1, inplace=True)
 
     points_dataframe = points_dataframe.reset_index()
     save_paths_df = pd.merge(
@@ -343,11 +338,6 @@ def create_igraph_from_dataframe(graph_dataframe, directed=False, simple=False):
     es, vs, simple = graph.es, graph.vs, graph.is_simple()
     d = "directed" if directed else "undirected"
     s = "simple" if simple else "multi"
-    print(
-        "Created {}, {} {}: {} edges, {} nodes.".format(
-            s, d, "igraph", len(es), len(vs)
-        )
-    )
 
     return graph
 
@@ -359,7 +349,6 @@ def od_flow_allocation_capacity_constrained(
     over_capacity_threshold=1.0e-3,
     directed=False,
     simple=False,
-    store_edge_path=True,
 ):
     network_dataframe["over_capacity"] = (
         network_dataframe.capacity - network_dataframe.flow
@@ -392,7 +381,6 @@ def od_flow_allocation_capacity_constrained(
                 flow_ods,
                 graph,
                 attribute_list=attribute_list,
-                store_edge_path=store_edge_path,
             )
             unassigned_paths.append(flow_ods[flow_ods.cost == 0])
             flow_ods = flow_ods[flow_ods.cost > 0]
@@ -414,17 +402,9 @@ def od_flow_allocation_capacity_constrained(
                     edge_paths_overcapacity = get_path_indexes_for_edges(
                         edge_id_paths, over_capacity_edges
                     )
-                    if store_edge_path is False:
-                        cap_ods = flow_ods[
-                            ~flow_ods.index.isin(edge_paths_overcapacity)
-                        ]
-                        cap_ods.drop(["edge_path"], axis=1, inplace=True)
-                        capacity_ods.append(cap_ods)
-                        del cap_ods
-                    else:
-                        capacity_ods.append(
-                            flow_ods[~flow_ods.index.isin(edge_paths_overcapacity)]
-                        )
+                    capacity_ods.append(
+                        flow_ods[~flow_ods.index.isin(edge_paths_overcapacity)]
+                    )
 
                     over_capacity_ods = flow_ods[
                         flow_ods.index.isin(edge_paths_overcapacity)
@@ -445,8 +425,6 @@ def od_flow_allocation_capacity_constrained(
                         inplace=True,
                     )
                     cap_ods.rename(columns={"min_flows": "flow"}, inplace=True)
-                    if store_edge_path is False:
-                        cap_ods.drop(["edge_path"], axis=1, inplace=True)
 
                     capacity_ods.append(cap_ods)
                     del cap_ods
@@ -485,29 +463,40 @@ def od_flow_allocation_capacity_constrained(
                         )
                     del over_capacity_ods
                 else:
-                    if store_edge_path is False:
-                        flow_ods.drop(["edge_path"], axis=1, inplace=True)
                     capacity_ods.append(flow_ods)
                     network_dataframe.drop(
                         ["residual_capacity", "added_flow"], axis=1, inplace=True
                     )
                     flow_ods = pd.DataFrame()
-    flow_routes = pd.concat(capacity_ods)
-    return flow_routes, unassigned_paths, network_dataframe
 
-
-def get_path_indexes_for_edges_dataframe(
-    edge_ids_with_paths, selected_edge_list, path_index_column="path_index"
-):
-    return list(
-        set(
-            chain.from_iterable(
-                edge_ids_with_paths[edge_ids_with_paths.index.isin(selected_edge_list)][
-                    path_index_column
-                ].values.tolist()
-            )
+    if capacity_ods:
+        flow_routes = pd.concat(capacity_ods)
+    else:
+        flow_routes = pd.DataFrame(
+            {
+                "origin_id": [],
+                "destination_id": [],
+                "flow": [],
+                "edge_path": [],
+            }
         )
-    )
+    if unassigned_paths:
+        unassigned_paths_df = pd.concat(unassigned_paths)
+    else:
+        unassigned_paths_df = pd.DataFrame(
+            {
+                "origin_id": [],
+                "destination_id": [],
+                "flow": [],
+                "edge_path": [],
+            }
+        )
+    return flow_routes, unassigned_paths_df, network_dataframe
+
+
+def get_path_indexes_for_edges_dataframe(edge_ids_with_paths, selected_edge_list):
+    mask = edge_ids_with_paths.index.isin(selected_edge_list)
+    return list(set(edge_ids_with_paths[mask].path_index.values))
 
 
 def flow_disruption_estimation(
@@ -541,7 +530,7 @@ def flow_disruption_estimation(
         edge_id - String name or list of failed edges
         origin - String node ID of Origin of disrupted OD flow
         destination - String node ID of Destination of disrupted OD flow
-        no_access - Boolean 1 (no reroutng) or 0 (rerouting)
+        no_access - Boolean 1 (no rerouting) or 0 (rerouting)
         new_cost - Float value of estimated cost of OD journey after disruption
         new_distance - Float value of estimated distance of OD journey after disruption
         new_path - List of string edge ID's of estimated new route of OD journey after disruption
@@ -556,15 +545,12 @@ def flow_disruption_estimation(
 
     """Find the flows in the disrupted edges
     """
-    affected_flows = get_flow_on_edges(
-        select_flows, edge_id_column, "edge_path", flow_column
-    )
+    affected_flows = get_flow_on_edges(select_flows)
     affected_flows.rename(columns={flow_column: "affected_flows"}, inplace=True)
-    network_df_in = network_dataframe.copy()
     network_df_in = pd.merge(
-        network_df_in, affected_flows, how="left", on=[edge_id_column]
-    )
-    network_df_in["affected_flows"].fillna(0, inplace=True)
+        network_dataframe, affected_flows, how="left", on=[edge_id_column]
+    ).copy()
+    network_df_in["affected_flows"] = network_df_in["affected_flows"].fillna(0)
     network_df_in[flow_column] = (
         network_df_in[flow_column] - network_df_in["affected_flows"]
     )
@@ -578,15 +564,11 @@ def flow_disruption_estimation(
         affected_flows.rename(
             columns=dict([(c, f"old_{c}") for c in attribute_list]), inplace=True
         )
-    reassinged_flows, no_flows, _ = od_flow_allocation_capacity_constrained(
+    reassigned_flows, no_flows, _ = od_flow_allocation_capacity_constrained(
         affected_flows,
-        network_df_in[~network_df_in[edge_id_column].isin(edge_failure_set)],
-        flow_column,
-        cost_column,
-        edge_id_column,
+        network_df_in[~network_df_in[edge_id_column].isin(edge_failure_set)].copy(),
         attribute_list=attribute_list,
-        store_edge_path=False,
     )
     del network_df_in, affected_flows
 
-    return reassinged_flows, no_flows
+    return reassigned_flows, no_flows
