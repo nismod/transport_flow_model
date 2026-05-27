@@ -318,7 +318,7 @@ packages:
   - pandas
   - pyarrow
   - tqdm
-  requires_python: '>=3.12'
+  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/05/1e/ada6fb15a1d75b5bd9b554355a69a798c55a7dcc93b8d41596265c1772e3/pyproj-3.7.2-cp314-cp314-manylinux_2_28_x86_64.whl
   name: pyproj
   version: 3.7.2
