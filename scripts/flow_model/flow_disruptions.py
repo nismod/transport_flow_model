@@ -38,7 +38,6 @@ def main(config):
 
     # Specify the names of the important columns in the pre-disruption OD file
     flow_column = "flow"  # Total tons column
-    flow_value_columns = [flow_column]
     edge_path_column = "edge_path"
     cost_column = "cost"  # The cost criteria used in the OD assignment
     distance_column = (
@@ -63,7 +62,7 @@ def main(config):
     ]
 
     flow_df = pd.read_csv(od_flows_file)
-    network_df = pd.read_csv(edge_flows_file).rename({"id": "edge_id"})
+    network_df = pd.read_csv(edge_flows_file).rename(columns={"id": "edge_id"})
 
     flow_df.edge_path = flow_df.edge_path.map(lambda s: json.loads(s.replace("'", '"')))
 
@@ -111,16 +110,21 @@ def main(config):
                 attribute_list=network_attribute_columns,
             )
 
-            # TODO merge on old cost, trace new cost through flow_disruption estimation
+            if len(rerouted_flows.index) > 0:
+                rerouted_flows[f"rerouting_{cost_column}"] = (
+                    rerouted_flows[cost_column] - rerouted_flows[f"old_{cost_column}"]
+                ) * rerouted_flows[flow_column]
+                if network_attribute_columns is not None:
+                    for attr_l in network_attribute_columns:
+                        rerouted_flows[f"rerouting_{attr_l}"] = (
+                            rerouted_flows[attr_l] - rerouted_flows[f"old_{attr_l}"]
+                        )
+            else:
+                for loss_column in rerouting_loss_columns:
+                    rerouted_flows[loss_column] = pd.Series(dtype=float)
 
-            rerouted_flows[f"rerouting_{cost_column}"] = (
-                rerouted_flows[cost_column] - rerouted_flows[f"old_{cost_column}"]
-            ) * rerouted_flows[flow_column]
-            if network_attribute_columns is not None:
-                for attr_l in network_attribute_columns:
-                    rerouted_flows[f"rerouting_{attr_l}"] = (
-                        rerouted_flows[attr_l] - rerouted_flows[f"old_{attr_l}"]
-                    )
+            for loss_column in rerouting_loss_columns:
+                isolated_flows[loss_column] = 0.0
 
             if len(fail_edges) == 1:
                 rerouted_flows[failure_id_column] = fail_edges[0]
@@ -133,7 +137,7 @@ def main(config):
             ef_list.append(isolated_flows)
 
     ef_list = pd.concat(ef_list, axis=0, ignore_index=True)
-    sum_columns = [c for c in ef_list.columns.values.tolist() if c != failure_id_column]
+    sum_columns = [flow_column] + rerouting_loss_columns
     ef_list = (
         ef_list.groupby(failure_id_column)
         .agg(dict([(c, "sum") for c in sum_columns]))
