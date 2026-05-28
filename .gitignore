@@ -24,7 +24,8 @@ __pycache__
 _version.py
 
 # Docs
-docs/_build
+docs/build
+
 # pixi environments
 .pixi/*
 !.pixi/config.toml

@@ -12,6 +12,7 @@ dependencies = ["igraph", "geopandas", "pandas", "pyarrow", "tqdm"]
 
 [dependency-groups]
 dev = ["pytest", "pytest-cov", "ruff>=0.15.14,<0.16"]
+doc = ["sphinx", "pydata-sphinx-theme"]
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
@@ -36,9 +37,12 @@ transport-flow-model = { path = ".", editable = true }
 [tool.pixi.tasks]
 
 [tool.pixi.environments]
-default = ["dev"]
+default = ["dev", "doc"]
 
 [tool.pixi.feature.dev.tasks]
 lint = "ruff check"
 format = "ruff format"
 test = "python -m pytest tests"
+
+[tool.pixi.feature.doc.tasks]
+docs = "cd docs && make html"
