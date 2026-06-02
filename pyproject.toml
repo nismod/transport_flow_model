@@ -46,3 +46,4 @@ test = "python -m pytest tests"
 
 [tool.pixi.feature.doc.tasks]
 docs = "cd docs && make html"
+doctest = "cd docs && make doctest"
