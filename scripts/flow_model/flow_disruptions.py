@@ -10,11 +10,8 @@ import json
 import os
 import pandas as pd
 
-from transport_flow_model.flow_utils import (
-    flow_disruption_estimation,
-    get_flow_paths_indexes_and_edges_dataframe,
-    load_config,
-)
+from transport_flow_model.model import Network, ODFlows
+from transport_flow_model.config import load_config
 
 
 def main(config):
@@ -26,7 +23,7 @@ def main(config):
     os.makedirs(disruption_results_path, exist_ok=True)
 
     #
-    #     OD Inputs
+    # OD Inputs
     #
     flow_folder = os.path.join(results_data_path, "flow_od_paths")
 
@@ -51,20 +48,19 @@ def main(config):
         ]
     else:
         rerouting_loss_columns = [f"rerouting_{cost_column}"]
-    # Get all the relevant columns in the OD file
-    od_columns = [  # noqa - unused for now
-        "origin_id",
-        "destination_id",
-        edge_path_column,
-        cost_column,
-        distance_column,
-        time_column,
-    ]
 
+    # Load flow and network data
     flow_df = pd.read_csv(od_flows_file)
     network_df = pd.read_csv(edge_flows_file).rename(columns={"id": "edge_id"})
 
-    flow_df.edge_path = flow_df.edge_path.map(lambda s: json.loads(s.replace("'", '"')))
+    # Parse edge_path from JSON string representation
+    flow_df[edge_path_column] = flow_df[edge_path_column].map(
+        lambda s: json.loads(s.replace("'", '"'))
+    )
+
+    # Create Network and ODFlows objects
+    network = Network(network_df)
+    od_flows = ODFlows(flow_df)
 
     #
     # Damage scenario inputs
@@ -78,18 +74,10 @@ def main(config):
     failure_edges = pd.read_csv(os.path.join(damages_results_path, "failure_set.csv"))
 
     #
-    # Process the OD flows to identify edges on paths
+    # Process disruptions
     #
 
-    # Get the paths indexes of every edge in the OD dataframe This step could
-    # also be a pre computation script and its output stored in advance It is a
-    # slow step if the OD is very big
-    edge_path_idx = get_flow_paths_indexes_and_edges_dataframe(
-        flow_df, edge_path_column
-    )
-
-    # Start the failure simiulations by looping over each failure scenario
-    # corresponding to an inidvidual failed edge This step should be parallelised
+    # Start the failure simulations by looping over each failure scenario
     ef_list = []
     for row in failure_edges.itertuples():
         fail_edges = getattr(row, failure_id_column)
@@ -97,35 +85,41 @@ def main(config):
         if not isinstance(fail_edges, list):
             fail_edges = [fail_edges]
 
+        # Check if there is pre-disruption flow on failed edges
         if network_df[network_df["edge_id"].isin(fail_edges)][flow_column].sum() > 0:
-            # Rerouting done only if the pre-disruption flow on edge > 0
-            rerouted_flows, isolated_flows = flow_disruption_estimation(
-                network_df,
-                fail_edges,
-                flow_df,
-                edge_path_idx,
-                "edge_id",
-                flow_column,
-                cost_column,
-                attribute_list=network_attribute_columns,
+            # Run disruption analysis using Network.disrupt()
+            disruption_result = network.disrupt(
+                od_flows,
+                failed_edges=fail_edges,
+                capacity_constrained=True,
+                directed=True,
             )
 
-            if len(rerouted_flows.index) > 0:
+            rerouted_flows = disruption_result.rerouted_flows.to_dataframe()
+            isolated_flows = disruption_result.isolated_od.to_dataframe()
+
+            # Calculate rerouting losses if flows were rerouted
+            if len(rerouted_flows) > 0:
+                # Store old costs for comparison
                 rerouted_flows[f"rerouting_{cost_column}"] = (
-                    rerouted_flows[cost_column] - rerouted_flows[f"old_{cost_column}"]
+                    rerouted_flows[cost_column]
                 ) * rerouted_flows[flow_column]
+                # Calculate attribute losses if available
                 if network_attribute_columns is not None:
                     for attr_l in network_attribute_columns:
-                        rerouted_flows[f"rerouting_{attr_l}"] = (
-                            rerouted_flows[attr_l] - rerouted_flows[f"old_{attr_l}"]
-                        )
+                        if attr_l in rerouted_flows.columns:
+                            rerouted_flows[f"rerouting_{attr_l}"] = rerouted_flows[
+                                attr_l
+                            ]
             else:
                 for loss_column in rerouting_loss_columns:
                     rerouted_flows[loss_column] = pd.Series(dtype=float)
 
+            # Initialize loss columns for isolated flows
             for loss_column in rerouting_loss_columns:
                 isolated_flows[loss_column] = 0.0
 
+            # Tag with failure scenario
             if len(fail_edges) == 1:
                 rerouted_flows[failure_id_column] = fail_edges[0]
                 isolated_flows[failure_id_column] = fail_edges[0]

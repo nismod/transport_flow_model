@@ -6,19 +6,16 @@ import argparse
 import os
 import pandas as pd
 from transport_flow_model.model import Network, OD, ODFlows
-from transport_flow_model.flow_utils import (
-    load_config,
-    od_flow_allocation_capacity_constrained,
-)
+from transport_flow_model.config import load_config
 
 
 def main(config):
     processed_data_path = config["paths"]["data"]
     output_data_path = config["paths"]["results"]
 
-    ######################
-    #     Model Inputs   #
-    ######################
+    #
+    # Model Inputs
+    #
     # Specify flow OD data path
     flow_od_folder = os.path.join(processed_data_path, "od")
     # Specify path of network dataframe
@@ -61,25 +58,19 @@ def main(config):
         },
     )
 
-    ########################
-    #     Model run        #
-    ########################
+    #
+    # Model run
+    #
 
-    # Create the network graph
-    network_dataframe = network.to_dataframe(copy=False)
-    od_dataframe = od.to_dataframe(copy=False)
+    # Get OD dataframe for later use with flow sub-columns
+    od_dataframe = od.to_dataframe(copy=True)
 
-    network_attribute_columns = ["length_m", "time_hr"]  # optional columns
+    # Perform capacity-constrained flow allocation
+    allocation_result = network.allocate(od, capacity_constrained=True, directed=True)
 
-    network_dataframe["flow"] = 0  # To assign an initial flow to every edge
-
-    flow_routes, unassigned_routes, network_dataframe = (
-        od_flow_allocation_capacity_constrained(
-            od_dataframe,
-            network_dataframe,
-            attribute_list=network_attribute_columns,
-        )
-    )
+    flow_routes = allocation_result.od_flows.to_dataframe(copy=False)
+    unassigned_routes = allocation_result.unassigned_od.to_dataframe(copy=False)
+    network_dataframe = allocation_result.network_flows.to_dataframe(copy=False)
 
     ########################
     #     Outputs          #
@@ -89,14 +80,14 @@ def main(config):
     network_dataframe.to_csv(
         os.path.join(results_folder, "network_edge_total_flows.csv"), index=False
     )
+
     # Store unassigned OD flows
-    unassigned_routes = pd.concat(unassigned_routes, axis=0, ignore_index=True)
     unassigned_routes.to_csv(
         os.path.join(results_folder, "unassigned_od_flows.csv"), index=False
     )
 
+    # Create ODFlows object and save flow paths
     od_flows = ODFlows(flow_routes)
-
     od_flows_dataframe = od_flows.to_dataframe(copy=False)
     # We might have more flow columns in the OD matrix have we would like to partition
     # Similar to how the total flow might be divided among different routes for the same OD-pair
