@@ -8,8 +8,8 @@ from heapq import heappop, heappush
 from math import inf, isfinite
 from pathlib import Path
 
+import geopandas as gpd
 import pandas as pd
-
 
 FLOW_COLUMNS = ("origin_id", "destination_id", "flow")
 OD_FLOW_COLUMNS = ("origin_id", "destination_id", "flow", "edge_path", "cost")
@@ -134,6 +134,67 @@ class OD:
         return cls(data)
 
     @classmethod
+    def from_file(cls, path: str | Path, column_map: dict[str, str], layer=None) -> OD:
+        """Load a file (GeoJSON, Shapefile, etc.) and rename source columns to this class' schema."""
+        target_columns = set(column_map.values())
+        to_rename = set(column_map.keys())
+        missing_columns = [
+            col for col in cls.REQUIRED_COLUMNS if col not in target_columns
+        ]
+        if missing_columns:
+            raise ValueError(
+                "column_map must include mappings for required columns "
+                f"{missing_columns}"
+            )
+
+        data = gpd.read_file(path, layer=layer, usecols=to_rename)
+        # Drop geometry column if present (for non-spatial data)
+        if "geometry" in data.columns:
+            data = data.drop(columns=["geometry"])
+        data = data.rename(columns=column_map)
+        data = pd.DataFrame(data)  # Convert from GeoDataFrame to DataFrame
+
+        return cls(data)
+
+    @classmethod
+    def from_parquet(cls, path: str | Path, column_map: dict[str, str]) -> OD:
+        """Load a Parquet file and rename source columns to this class' schema."""
+        target_columns = set(column_map.values())
+        to_rename = set(column_map.keys())
+        missing_columns = [
+            col for col in cls.REQUIRED_COLUMNS if col not in target_columns
+        ]
+        if missing_columns:
+            raise ValueError(
+                "column_map must include mappings for required columns "
+                f"{missing_columns}"
+            )
+
+        try:
+            data = pd.read_parquet(path, columns=list(to_rename))
+        except ValueError as e:
+            msg = e.args[0].replace(
+                "Usecols do not match columns, columns expected but not found: ", ""
+            )
+            raise ValueError(f"Missing expected columns: {msg}") from e
+        data = data.rename(columns=column_map)
+
+        return cls(data)
+
+    def to_csv(self, path: str | Path, index=False):
+        """Write OD data to CSV."""
+        self._data.to_csv(path, index=index)
+
+    def to_parquet(self, path: str | Path, index=False):
+        """Write OD data to Parquet format."""
+        self._data.to_parquet(path, index=index)
+
+    def to_file(self, path: str | Path, layer=None, **kwargs):
+        """Write OD data to a file using geopandas (GeoJSON, Shapefile, etc.)."""
+        gdf = gpd.GeoDataFrame(self._data)
+        gdf.to_file(path, layer=layer, **kwargs)
+
+    @classmethod
     def losses_from_flows(cls, initial: ODFlows, disrupted: ODFlows) -> OD:
         """Aggregate per-OD rerouting losses from initial and disrupted paths."""
         initial_data = initial.to_dataframe()
@@ -160,9 +221,7 @@ class OD:
             how="left",
         )
         losses["initial_cost"] = losses["initial_cost"].fillna(0)
-        losses["rerouting_loss"] = (
-            losses["disrupted_cost"] - losses["initial_cost"]
-        )
+        losses["rerouting_loss"] = losses["disrupted_cost"] - losses["initial_cost"]
         losses = losses.loc[:, list(LOSS_COLUMNS)]
         return cls(_coerce_integral_numeric_columns(losses))
 
@@ -195,6 +254,19 @@ class Network:
         else:
             return self._data
 
+    def to_csv(self, path: str | Path, index=False):
+        """Write network data to CSV."""
+        self._data.to_csv(path, index=index)
+
+    def to_parquet(self, path: str | Path, index=False):
+        """Write network data to Parquet format."""
+        self._data.to_parquet(path, index=index)
+
+    def to_file(self, path: str | Path, layer=None, **kwargs):
+        """Write network data to a file using geopandas (GeoJSON, Shapefile, etc.)."""
+        gdf = gpd.GeoDataFrame(self._data)
+        gdf.to_file(path, layer=layer, **kwargs)
+
     @classmethod
     def from_csv(cls, path: str | Path, column_map: dict[str, str]) -> Network:
         """Load a CSV and rename source columns to this class' schema."""
@@ -210,6 +282,56 @@ class Network:
             )
 
         data = pd.read_csv(path, usecols=to_rename)
+        data = data.rename(columns=column_map)
+
+        return cls(data)
+
+    @classmethod
+    def from_file(
+        cls, path: str | Path, column_map: dict[str, str], layer=None
+    ) -> Network:
+        """Load a file (GeoJSON, Shapefile, etc.) and rename source columns to this class' schema."""
+        target_columns = set(column_map.values())
+        to_rename = set(column_map.keys())
+        missing_columns = [
+            col for col in cls.REQUIRED_COLUMNS if col not in target_columns
+        ]
+        if missing_columns:
+            raise ValueError(
+                "column_map must include mappings for required columns "
+                f"{missing_columns}"
+            )
+
+        data = gpd.read_file(path, layer=layer, usecols=to_rename)
+        # Drop geometry column if present (for non-spatial data)
+        if "geometry" in data.columns:
+            data = data.drop(columns=["geometry"])
+        data = data.rename(columns=column_map)
+        data = pd.DataFrame(data)  # Convert from GeoDataFrame to DataFrame
+
+        return cls(data)
+
+    @classmethod
+    def from_parquet(cls, path: str | Path, column_map: dict[str, str]) -> Network:
+        """Load a Parquet file and rename source columns to this class' schema."""
+        target_columns = set(column_map.values())
+        to_rename = set(column_map.keys())
+        missing_columns = [
+            col for col in cls.REQUIRED_COLUMNS if col not in target_columns
+        ]
+        if missing_columns:
+            raise ValueError(
+                "column_map must include mappings for required columns "
+                f"{missing_columns}"
+            )
+
+        try:
+            data = pd.read_parquet(path, columns=list(to_rename))
+        except ValueError as e:
+            msg = e.args[0].replace(
+                "Usecols do not match columns, columns expected but not found: ", ""
+            )
+            raise ValueError(f"Missing expected columns: {msg}") from e
         data = data.rename(columns=column_map)
 
         return cls(data)
@@ -486,6 +608,15 @@ class ODFlows:
         """Write OD flow paths to CSV."""
         self._data.to_csv(path, index=index)
 
+    def to_parquet(self, path: str | Path, index=False):
+        """Write OD flow paths to Parquet format."""
+        self._data.to_parquet(path, index=index)
+
+    def to_file(self, path: str | Path, layer=None, **kwargs):
+        """Write OD flow paths to a file using geopandas (GeoJSON, Shapefile, etc.)."""
+        gdf = gpd.GeoDataFrame(self._data)
+        gdf.to_file(path, layer=layer, **kwargs)
+
 
 class NetworkFlows:
     """Aggregate flows on network
@@ -528,10 +659,23 @@ class NetworkFlows:
         else:
             base_flows = 0
         edge_flows = _flow_by_edge(od_flows)
-        network_data["flow"] = (
-            base_flows + network_data["edge_id"].map(edge_flows).fillna(0)
-        )
+        network_data["flow"] = base_flows + network_data["edge_id"].map(
+            edge_flows
+        ).fillna(0)
         return cls(_coerce_integral_numeric_columns(network_data))
+
+    def to_csv(self, path: str | Path, index=False):
+        """Write network flows to CSV."""
+        self._data.to_csv(path, index=index)
+
+    def to_parquet(self, path: str | Path, index=False):
+        """Write network flows to Parquet format."""
+        self._data.to_parquet(path, index=index)
+
+    def to_file(self, path: str | Path, layer=None, **kwargs):
+        """Write network flows to a file using geopandas (GeoJSON, Shapefile, etc.)."""
+        gdf = gpd.GeoDataFrame(self._data)
+        gdf.to_file(path, layer=layer, **kwargs)
 
 
 def _aggregate_od(data: pd.DataFrame) -> pd.DataFrame:
@@ -587,7 +731,9 @@ def _shortest_path(
         ):
             continue
         edge_cost = getattr(row, "cost") if has_cost else 1
-        adjacency[row.edge_from].append((row.edge_to, edge_id, float(edge_cost), sequence))
+        adjacency[row.edge_from].append(
+            (row.edge_to, edge_id, float(edge_cost), sequence)
+        )
         sequence += 1
         if not directed:
             adjacency[row.edge_to].append(
