@@ -6,6 +6,7 @@ Welcome to ``tfm``'s documentation!
    :caption: User guides
 
    guides/data-models
+   guides/od-estimation
    guides/least-cost-allocation
    guides/multiple-flows-and-capacity
    guides/disruptions
