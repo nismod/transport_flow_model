@@ -7,7 +7,8 @@ Run this after initial flow_allocation.py
 
 import argparse
 import json
-import os
+from pathlib import Path
+
 import pandas as pd
 
 from transport_flow_model.model import Network, ODFlows
@@ -15,23 +16,23 @@ from transport_flow_model.config import load_config
 
 
 def main(config):
-    processed_data_path = config["paths"]["data"]
-    results_data_path = config["paths"]["results"]
+    processed_data_path = Path(config["paths"]["data"])
+    results_data_path = Path(config["paths"]["results"])
 
     # Create a folder for the flow disruption outputs. Example name given here
-    disruption_results_path = os.path.join(results_data_path, "flow_disruptions")
-    os.makedirs(disruption_results_path, exist_ok=True)
+    disruption_results_path = results_data_path / "flow_disruptions"
+    disruption_results_path.mkdir(parents=True, exist_ok=True)
 
     #
     # OD Inputs
     #
-    flow_folder = os.path.join(results_data_path, "flow_od_paths")
+    flow_folder = results_data_path / "flow_od_paths"
 
     # Specify flow OD data path
-    od_flows_file = os.path.join(flow_folder, "od_flows.csv")
+    od_flows_file = flow_folder / "od_flows.csv"
 
     # Specify path of network dataframe with the pre-disruption flows
-    edge_flows_file = os.path.join(flow_folder, "network_edge_total_flows.csv")
+    edge_flows_file = flow_folder / "network_edge_total_flows.csv"
 
     # Specify the names of the important columns in the pre-disruption OD file
     flow_column = "flow"  # Total tons column
@@ -70,8 +71,8 @@ def main(config):
     # analysis where we assemble the unique set of failed edges Get the list of
     # edges of the initiating sector to fail
     failure_id_column = "edge_id"
-    damages_results_path = os.path.join(processed_data_path, "damages")
-    failure_edges = pd.read_csv(os.path.join(damages_results_path, "failure_set.csv"))
+    damages_results_path = processed_data_path / "damages"
+    failure_edges = pd.read_csv(damages_results_path / "failure_set.csv")
 
     #
     # Process disruptions
@@ -142,7 +143,7 @@ def main(config):
         ef_list[f"rerouting_{cost_column}"] + ef_list[flow_column]
     )
     ef_list.to_csv(
-        os.path.join(disruption_results_path, "flow_disruption_losses.csv"),
+        disruption_results_path / "flow_disruption_losses.csv",
         index=False,
     )
 

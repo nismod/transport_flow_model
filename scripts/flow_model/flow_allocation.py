@@ -3,31 +3,32 @@
 """This code estimates the routes between Origin-Destination pairs over a network graph under capacity constraints"""
 
 import argparse
-import os
+from pathlib import Path
+
 import pandas as pd
 from transport_flow_model.model import Network, OD, ODFlows
 from transport_flow_model.config import load_config
 
 
 def main(config):
-    processed_data_path = config["paths"]["data"]
-    output_data_path = config["paths"]["results"]
+    processed_data_path = Path(config["paths"]["data"])
+    output_data_path = Path(config["paths"]["results"])
 
     #
     # Model Inputs
     #
     # Specify flow OD data path
-    flow_od_folder = os.path.join(processed_data_path, "od")
+    flow_od_folder = processed_data_path / "od"
     # Specify path of network dataframe
-    network_data_folder = os.path.join(processed_data_path, "network")
+    network_data_folder = processed_data_path / "network"
 
     # Create a folder for the PD flow outputs. Exmaple name given here
-    results_folder = os.path.join(output_data_path, "flow_od_paths")
-    os.makedirs(results_folder, exist_ok=True)
+    results_folder = output_data_path / "flow_od_paths"
+    results_folder.mkdir(parents=True, exist_ok=True)
 
     # Read network CSV and normalize to the internal schema.
     network = Network.from_csv(
-        os.path.join(network_data_folder, "network.csv"),
+        network_data_folder / "network.csv",
         {
             # Specify the network topology and ID columns
             "from_id": "edge_from",
@@ -49,7 +50,7 @@ def main(config):
 
     # Read OD CSV and normalize to the internal schema.
     od = OD.from_csv(
-        os.path.join(flow_od_folder, "od.csv"),
+        flow_od_folder / "od.csv",
         # Specify OD columns for origin, destination, and flow values
         {
             "origin_id": "origin_id",
@@ -78,12 +79,12 @@ def main(config):
 
     # Store network dataframe with final flows
     network_dataframe.to_csv(
-        os.path.join(results_folder, "network_edge_total_flows.csv"), index=False
+        results_folder / "network_edge_total_flows.csv", index=False
     )
 
     # Store unassigned OD flows
     unassigned_routes.to_csv(
-        os.path.join(results_folder, "unassigned_od_flows.csv"), index=False
+        results_folder / "unassigned_od_flows.csv", index=False
     )
 
     # Create ODFlows object and save flow paths
@@ -115,7 +116,7 @@ def main(config):
 
     od_flows = ODFlows(od_flows_dataframe)
 
-    od_flows.to_csv(os.path.join(results_folder, "od_flows.csv"), index=False)
+    od_flows.to_csv(results_folder / "od_flows.csv", index=False)
 
 
 if __name__ == "__main__":
