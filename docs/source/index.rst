@@ -11,6 +11,12 @@ Welcome to ``tfm``'s documentation!
    guides/disruptions
    guides/losses
 
+.. toctree::
+   :maxdepth: 2
+   :caption: Development
+
+   development
+
 
 Indices and tables
 ==================
