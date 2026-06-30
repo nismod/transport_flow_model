@@ -2,8 +2,15 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19566285.svg)](https://doi.org/10.5281/zenodo.19566285)
 
-Scripts to run a transport flow model with capacity constraints
-The model assumes flows along edges without constrains, till they reach capacity
+This Python package implements iterative capacity-constrained network flow
+allocation. It routes flows through networks sequentially until link capacities
+are exhausted, providing a simplified tool for infrastructure risk and
+resilience analysis.
+
+It is part of the open-source [National Infrastructure Systems Model (NISMOD)
+ecosystem](https://github.com/nismod) developed by the [Oxford Programme for
+Sustainable Infrastructure Systems (OPSIS)](https://opsis.eci.ox.ac.uk) at the
+University of Oxford.
 
 To run the model:
 
@@ -26,19 +33,19 @@ pixi run test
 
 Useful Pixi commands:
 
-| Command | Purpose |
-| --- | --- |
-| `pixi run test` | Run the pytest suite. |
-| `pixi run lint` | Run Ruff lint checks. |
-| `pixi run format` | Format Python code with Ruff. |
-| `pixi run docs` | Build the Sphinx HTML documentation. |
-| `pixi run doctest` | Run Sphinx doctests in the documentation. |
-| `pixi run prepare-benchmark-data` | Download and prepare the generated West Yorkshire benchmark dataset. |
-| `pixi run benchmark-scripts-smoke` | Run a quick integration benchmark against `config.example.json`. |
-| `pixi run benchmark-scripts` | Time the allocation and disruption scripts and write benchmark CSV/JSON output. |
-| `pixi run profile-flow-scripts` | Write CPU/time flamegraphs for allocation and disruption. |
-| `pixi run profile-flow-allocation` | Write a flamegraph for `flow_allocation.py`. |
-| `pixi run profile-flow-disruptions` | Write a flamegraph for `flow_disruptions.py`. |
+| Command                             | Purpose                                                                         |
+| ----------------------------------- | ------------------------------------------------------------------------------- |
+| `pixi run test`                     | Run the pytest suite.                                                           |
+| `pixi run lint`                     | Run Ruff lint checks.                                                           |
+| `pixi run format`                   | Format Python code with Ruff.                                                   |
+| `pixi run docs`                     | Build the Sphinx HTML documentation.                                            |
+| `pixi run doctest`                  | Run Sphinx doctests in the documentation.                                       |
+| `pixi run prepare-benchmark-data`   | Download and prepare the generated West Yorkshire benchmark dataset.            |
+| `pixi run benchmark-scripts-smoke`  | Run a quick integration benchmark against `config.example.json`.                |
+| `pixi run benchmark-scripts`        | Time the allocation and disruption scripts and write benchmark CSV/JSON output. |
+| `pixi run profile-flow-scripts`     | Write CPU/time flamegraphs for allocation and disruption.                       |
+| `pixi run profile-flow-allocation`  | Write a flamegraph for `flow_allocation.py`.                                    |
+| `pixi run profile-flow-disruptions` | Write a flamegraph for `flow_disruptions.py`.                                   |
 
 To add a new package dependency, make sure to use `--pypi` to include it
 in the `pyproject.toml` `dependencies` table:
