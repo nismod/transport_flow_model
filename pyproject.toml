@@ -40,6 +40,8 @@ transport-flow-model = { path = ".", editable = true }
 default = ["dev", "doc"]
 
 [tool.pixi.feature.dev.tasks]
+benchmark-scripts = "python scripts/benchmark_flow_scripts.py"
+benchmark-scripts-smoke = "python scripts/benchmark_flow_scripts.py --config config.example.json --repeats 1 --max-seconds 30"
 lint = "ruff check"
 format = "ruff format"
 test = "python -m pytest tests"
