@@ -1,0 +1,9 @@
+{
+  "comment": "Benchmark config for generated West Yorkshire OSMnx data. Generate inputs with `pixi run prepare-benchmark-data --overwrite`, then run the allocation and disruption scripts with this config.",
+  "paths": {
+    "incoming_data": "./benchmark_data/west_yorkshire/incoming_data",
+    "data": "./benchmark_data/west_yorkshire/processed_data",
+    "figures": "./benchmark_data/west_yorkshire/figures",
+    "results": "./benchmark_data/west_yorkshire/results"
+  }
+}

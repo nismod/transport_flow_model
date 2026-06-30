@@ -24,6 +24,22 @@ To run the tests (see `[tool.pixi.tasks]` within `pyproject.toml`):
 pixi run test
 ```
 
+Useful Pixi commands:
+
+| Command | Purpose |
+| --- | --- |
+| `pixi run test` | Run the pytest suite. |
+| `pixi run lint` | Run Ruff lint checks. |
+| `pixi run format` | Format Python code with Ruff. |
+| `pixi run docs` | Build the Sphinx HTML documentation. |
+| `pixi run doctest` | Run Sphinx doctests in the documentation. |
+| `pixi run prepare-benchmark-data` | Download and prepare the generated West Yorkshire benchmark dataset. |
+| `pixi run benchmark-scripts-smoke` | Run a quick integration benchmark against `config.example.json`. |
+| `pixi run benchmark-scripts` | Time the allocation and disruption scripts and write benchmark CSV/JSON output. |
+| `pixi run profile-flow-scripts` | Write CPU/time flamegraphs for allocation and disruption. |
+| `pixi run profile-flow-allocation` | Write a flamegraph for `flow_allocation.py`. |
+| `pixi run profile-flow-disruptions` | Write a flamegraph for `flow_disruptions.py`. |
+
 To add a new package dependency, make sure to use `--pypi` to include it
 in the `pyproject.toml` `dependencies` table:
 

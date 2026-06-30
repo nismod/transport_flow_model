@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 dependencies = ["igraph", "geopandas", "pandas", "pyarrow", "tqdm"]
 
 [dependency-groups]
-dev = ["pytest", "pytest-cov", "ruff>=0.15.14,<0.16"]
+dev = ["pytest", "pytest-cov", "ruff>=0.15.14,<0.16", "osmnx>=2.1.0,<3", "py-spy>=0.4.2,<0.5"]
 doc = ["sphinx", "pydata-sphinx-theme"]
 
 [build-system]
@@ -42,6 +42,10 @@ default = ["dev", "doc"]
 [tool.pixi.feature.dev.tasks]
 benchmark-scripts = "python scripts/benchmark_flow_scripts.py"
 benchmark-scripts-smoke = "python scripts/benchmark_flow_scripts.py --config config.example.json --repeats 1 --max-seconds 30"
+prepare-benchmark-data = "python scripts/benchmark_preparation.py"
+profile-flow-allocation = "python scripts/profile_flow_scripts.py --script allocation"
+profile-flow-disruptions = "python scripts/profile_flow_scripts.py --script disruptions"
+profile-flow-scripts = "python scripts/profile_flow_scripts.py"
 lint = "ruff check"
 format = "ruff format"
 test = "python -m pytest tests"

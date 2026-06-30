@@ -7,6 +7,9 @@ figures/*
 processed_data/*
 example/results/*
 benchmark_results/*
+benchmark_data/*
+profile_results/*
+cache/*
 .bak/*
 
 # Editor config
