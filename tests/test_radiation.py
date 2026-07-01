@@ -296,6 +296,7 @@ def test_bidirectional_network(simple_network, zones_with_mapping):
 
     # Should have some bidirectional flows
     assert len(result) > 0
+    any_both = False
     # Check that there are flows in both directions for some pairs
     for _, row in result.iterrows():
         reverse = result[
@@ -304,7 +305,9 @@ def test_bidirectional_network(simple_network, zones_with_mapping):
         ]
         # Not all pairs need to have reverse flows (due to distance threshold)
         # but we should verify the model is working
-        assert True
+        if len(reverse):
+            any_both = True
+    assert any_both
 
 
 def test_custom_column_names(simple_network):
