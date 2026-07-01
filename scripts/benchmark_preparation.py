@@ -76,7 +76,9 @@ def main() -> int:
     nodes, edges = ox.graph_to_gdfs(graph, nodes=True, edges=True)
 
     if edges.empty:
-        raise BenchmarkPreparationError("OSMnx returned no edges for the requested area")
+        raise BenchmarkPreparationError(
+            "OSMnx returned no edges for the requested area"
+        )
     if "length" not in edges.columns:
         raise BenchmarkPreparationError("OSMnx edge data is missing the length column")
 
@@ -386,7 +388,9 @@ def map_zones_to_network_nodes(graph, zones: gpd.GeoDataFrame) -> pd.DataFrame:
         .sort_values("zone_id", kind="mergesort")
     )
     if joined["node_id"].isna().any():
-        raise BenchmarkPreparationError("Could not map all land-use zones to network nodes")
+        raise BenchmarkPreparationError(
+            "Could not map all land-use zones to network nodes"
+        )
     return pd.DataFrame(
         {
             "zone_id": joined["zone_id"].to_numpy(),

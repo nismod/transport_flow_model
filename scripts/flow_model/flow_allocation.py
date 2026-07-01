@@ -83,9 +83,7 @@ def main(config):
     )
 
     # Store unassigned OD flows
-    unassigned_routes.to_csv(
-        results_folder / "unassigned_od_flows.csv", index=False
-    )
+    unassigned_routes.to_csv(results_folder / "unassigned_od_flows.csv", index=False)
 
     # Create ODFlows object and save flow paths
     od_flows = ODFlows(flow_routes)

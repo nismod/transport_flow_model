@@ -103,8 +103,8 @@ def main(config):
             if len(rerouted_flows) > 0:
                 # Store old costs for comparison
                 rerouted_flows[f"rerouting_{cost_column}"] = (
-                    rerouted_flows[cost_column]
-                ) * rerouted_flows[flow_column]
+                    (rerouted_flows[cost_column]) * rerouted_flows[flow_column]
+                )
                 # Calculate attribute losses if available
                 if network_attribute_columns is not None:
                     for attr_l in network_attribute_columns:
