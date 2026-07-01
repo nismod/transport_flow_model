@@ -336,7 +336,6 @@ class TestNetworkIO:
     def test_network_from_file_with_column_mapping(self, tmp_path):
         """Test Network from_file with column mapping."""
         # Create a GeoJSON-like file with different column names
-        geojson_path = tmp_path / "network_renamed.geojson"
         pd.DataFrame(
             {
                 "from_node": ["A", "B"],
