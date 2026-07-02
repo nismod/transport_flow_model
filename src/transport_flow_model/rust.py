@@ -78,7 +78,9 @@ def _to_table(data: pa.Table | pa.RecordBatch | pd.DataFrame) -> pa.Table:
         return pa.Table.from_batches([data])
     if isinstance(data, pd.DataFrame):
         return pa.Table.from_pandas(data, preserve_index=False)
-    raise TypeError("data must be a pyarrow Table, pyarrow RecordBatch, or pandas DataFrame")
+    raise TypeError(
+        "data must be a pyarrow Table, pyarrow RecordBatch, or pandas DataFrame"
+    )
 
 
 def _to_ipc_stream(data: pa.Table | pa.RecordBatch | pd.DataFrame) -> bytes:

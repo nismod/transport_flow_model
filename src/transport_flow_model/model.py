@@ -515,7 +515,9 @@ class Network:
         normalized = _normalize_rust_inputs(network_data, od_flow_data)
         if normalized is None:
             return None
-        network_input, od_flows_input, node_id_map, edge_id_map, edge_value_to_id = normalized
+        network_input, od_flows_input, node_id_map, edge_id_map, edge_value_to_id = (
+            normalized
+        )
         try:
             od_flows_input["edge_path"] = od_flows_input["edge_path"].map(
                 lambda path: [edge_value_to_id[edge_id] for edge_id in path]
@@ -566,31 +568,58 @@ class Network:
         flow_rows = []
         unassigned_rows = []
 
+        # Group demands by origin for efficient single-source shortest paths
+        od_by_origin = defaultdict(list)
         for row in od.to_dataframe().itertuples(index=False):
-            path, cost = _shortest_path(
+            od_by_origin[row.origin_id].append(row)
+
+        # For each origin, compute shortest paths to all destinations
+        for origin_id, demands in od_by_origin.items():
+            paths = _single_source_shortest_paths(
                 network_data,
-                row.origin_id,
-                row.destination_id,
+                origin_id,
                 directed=directed,
             )
-            if path is None:
-                unassigned_rows.append(
-                    {
-                        "origin_id": row.origin_id,
-                        "destination_id": row.destination_id,
-                        "flow": row.flow,
-                    }
-                )
-                continue
-            flow_rows.append(
-                {
-                    "origin_id": row.origin_id,
-                    "destination_id": row.destination_id,
-                    "flow": row.flow,
-                    "edge_path": path,
-                    "cost": cost,
-                }
-            )
+
+            for demand in demands:
+                if demand.origin_id == demand.destination_id:
+                    flow_rows.append(
+                        {
+                            "origin_id": demand.origin_id,
+                            "destination_id": demand.destination_id,
+                            "flow": demand.flow,
+                            "edge_path": [],
+                            "cost": 0.0,
+                        }
+                    )
+                elif demand.destination_id in paths:
+                    path, cost = paths[demand.destination_id]
+                    if path is not None:
+                        flow_rows.append(
+                            {
+                                "origin_id": demand.origin_id,
+                                "destination_id": demand.destination_id,
+                                "flow": demand.flow,
+                                "edge_path": path,
+                                "cost": cost,
+                            }
+                        )
+                    else:
+                        unassigned_rows.append(
+                            {
+                                "origin_id": demand.origin_id,
+                                "destination_id": demand.destination_id,
+                                "flow": demand.flow,
+                            }
+                        )
+                else:
+                    unassigned_rows.append(
+                        {
+                            "origin_id": demand.origin_id,
+                            "destination_id": demand.destination_id,
+                            "flow": demand.flow,
+                        }
+                    )
 
         od_flows = ODFlows(_frame_from_records(flow_rows, OD_FLOW_COLUMNS))
         unassigned_od = OD(_frame_from_records(unassigned_rows, FLOW_COLUMNS))
@@ -614,32 +643,59 @@ class Network:
             route_rows = []
             next_pending = []
 
+            # Group pending demands by origin for efficient single-source shortest paths
+            pending_by_origin = defaultdict(list)
             for row in pending.itertuples(index=False):
-                path, cost = _shortest_path(
+                pending_by_origin[row.origin_id].append(row)
+
+            # For each origin, compute shortest paths to all potential destinations
+            for origin_id, demands in pending_by_origin.items():
+                paths = _single_source_shortest_paths(
                     network_data,
-                    row.origin_id,
-                    row.destination_id,
+                    origin_id,
                     directed=directed,
                     residual_capacity=residual_capacity,
                 )
-                if path is None:
-                    unassigned_rows.append(
-                        {
-                            "origin_id": row.origin_id,
-                            "destination_id": row.destination_id,
-                            "flow": row.flow,
-                        }
-                    )
-                    continue
-                route_rows.append(
-                    {
-                        "origin_id": row.origin_id,
-                        "destination_id": row.destination_id,
-                        "flow": row.flow,
-                        "edge_path": path,
-                        "cost": cost,
-                    }
-                )
+
+                for demand in demands:
+                    if demand.origin_id == demand.destination_id:
+                        route_rows.append(
+                            {
+                                "origin_id": demand.origin_id,
+                                "destination_id": demand.destination_id,
+                                "flow": demand.flow,
+                                "edge_path": [],
+                                "cost": 0.0,
+                            }
+                        )
+                    elif demand.destination_id in paths:
+                        path, cost = paths[demand.destination_id]
+                        if path is not None:
+                            route_rows.append(
+                                {
+                                    "origin_id": demand.origin_id,
+                                    "destination_id": demand.destination_id,
+                                    "flow": demand.flow,
+                                    "edge_path": path,
+                                    "cost": cost,
+                                }
+                            )
+                        else:
+                            unassigned_rows.append(
+                                {
+                                    "origin_id": demand.origin_id,
+                                    "destination_id": demand.destination_id,
+                                    "flow": demand.flow,
+                                }
+                            )
+                    else:
+                        unassigned_rows.append(
+                            {
+                                "origin_id": demand.origin_id,
+                                "destination_id": demand.destination_id,
+                                "flow": demand.flow,
+                            }
+                        )
 
             if not route_rows:
                 break
@@ -986,6 +1042,68 @@ def _initial_residual_capacity(network_data: pd.DataFrame) -> dict[str, float]:
         residual_capacity[edge_id] = max(float(capacity) - float(flow), 0.0)
 
     return residual_capacity
+
+
+def _single_source_shortest_paths(
+    network_data: pd.DataFrame,
+    origin_id,
+    *,
+    directed: bool,
+    residual_capacity: dict[str, float] | None = None,
+) -> dict[int | str, tuple[list[str], float] | tuple[None, None]]:
+    """Compute shortest paths from origin_id to all reachable destinations.
+
+    Returns a dict mapping destination_id -> (edge_path, cost) or (None, None) if unreachable.
+    This is more efficient than computing individual shortest paths for each OD pair
+    when there are many destinations from the same origin.
+    """
+    adjacency = defaultdict(list)
+    has_cost = "cost" in network_data.columns
+    sequence = 0
+    for row in network_data.itertuples(index=False):
+        edge_id = row.edge_id
+        if (
+            residual_capacity is not None
+            and residual_capacity.get(edge_id, 0.0) <= CAPACITY_EPSILON
+        ):
+            continue
+        edge_cost = getattr(row, "cost") if has_cost else 1
+        adjacency[row.edge_from].append(
+            (row.edge_to, edge_id, float(edge_cost), sequence)
+        )
+        sequence += 1
+        if not directed:
+            adjacency[row.edge_to].append(
+                (row.edge_from, edge_id, float(edge_cost), sequence)
+            )
+            sequence += 1
+
+    # Run Dijkstra from origin_id to all destinations
+    heap = [(0.0, 0, origin_id, [])]
+    best_cost = {origin_id: 0.0}
+    visited_destinations = {}
+    counter = 1
+
+    while heap:
+        cost, _, node_id, edge_path = heappop(heap)
+        if node_id in visited_destinations:
+            continue
+        visited_destinations[node_id] = (edge_path, cost)
+        if cost > best_cost.get(node_id, inf) + CAPACITY_EPSILON:
+            continue
+        for next_node, edge_id, edge_cost, order in adjacency.get(node_id, []):
+            if next_node in visited_destinations:
+                continue
+            next_cost = cost + edge_cost
+            if next_cost + CAPACITY_EPSILON < best_cost.get(next_node, inf):
+                best_cost[next_node] = next_cost
+                heappush(
+                    heap,
+                    (next_cost, order + counter, next_node, edge_path + [edge_id]),
+                )
+                counter += 1
+
+    return visited_destinations
 
 
 def _shortest_path(

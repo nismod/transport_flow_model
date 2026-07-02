@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
 
 pub const CAPACITY_EPSILON: f64 = 1.0e-9;
 
@@ -196,6 +196,60 @@ impl<'a> Graph<'a> {
         None
     }
 
+    fn single_source_shortest_paths(
+        &self,
+        origin: usize,
+        residual_capacity: Option<&[f64]>,
+    ) -> HashMap<usize, (Vec<usize>, f64)> {
+        if origin >= self.adjacency.len() {
+            return HashMap::new();
+        }
+
+        let mut paths = HashMap::new();
+        paths.insert(origin, (Vec::new(), 0.0));
+
+        let mut heap = BinaryHeap::from([QueueState {
+            cost: 0.0,
+            order: 0,
+            node: origin,
+            path: Vec::new(),
+        }]);
+        let mut best_cost = vec![f64::INFINITY; self.adjacency.len()];
+        best_cost[origin] = 0.0;
+        let mut counter = 1usize;
+
+        while let Some(state) = heap.pop() {
+            if state.cost > best_cost[state.node] + CAPACITY_EPSILON {
+                continue;
+            }
+
+            for adjacent in &self.adjacency[state.node] {
+                if residual_capacity
+                    .is_some_and(|capacity| capacity[adjacent.edge_index] <= CAPACITY_EPSILON)
+                {
+                    continue;
+                }
+
+                let next_cost = state.cost + adjacent.edge_cost;
+                if next_cost + CAPACITY_EPSILON < best_cost[adjacent.next_node] {
+                    best_cost[adjacent.next_node] = next_cost;
+                    let mut next_path = state.path.clone();
+                    next_path.push(adjacent.edge_index);
+                    paths.insert(adjacent.next_node, (next_path.clone(), next_cost));
+                    heap.push(QueueState {
+                        cost: next_cost,
+                        order: adjacent.order + counter,
+                        node: adjacent.next_node,
+                        path: next_path,
+                    });
+                    counter += 1;
+                }
+            }
+        }
+
+        paths
+    }
+
     fn edge_path_ids(&self, edge_path: &[usize]) -> Vec<usize> {
         edge_path
             .iter()
@@ -333,16 +387,32 @@ fn allocate_unconstrained(edges: &[Edge], demands: &[Demand], directed: bool) ->
     let mut od_flows = Vec::new();
     let mut unassigned_od = Vec::new();
 
+    // Group demands by origin
+    let mut demands_by_origin: HashMap<usize, Vec<&Demand>> = HashMap::new();
     for demand in demands {
-        match graph.shortest_path(demand.origin, demand.destination, None) {
-            Some((edge_path, cost)) => od_flows.push(OdFlow {
-                origin: demand.origin,
-                destination: demand.destination,
-                flow: demand.flow,
-                edge_path: graph.edge_path_ids(&edge_path),
-                cost,
-            }),
-            None => unassigned_od.push(demand.clone()),
+        demands_by_origin
+            .entry(demand.origin)
+            .or_insert_with(Vec::new)
+            .push(demand);
+    }
+
+    // Process each origin with single-source shortest paths
+    for (origin, origin_demands) in demands_by_origin {
+        let paths = graph.single_source_shortest_paths(origin, None);
+
+        for demand in origin_demands {
+            match paths.get(&demand.destination) {
+                Some((edge_path, cost)) => {
+                    od_flows.push(OdFlow {
+                        origin: demand.origin,
+                        destination: demand.destination,
+                        flow: demand.flow,
+                        edge_path: graph.edge_path_ids(edge_path),
+                        cost: *cost,
+                    });
+                }
+                None => unassigned_od.push(demand.clone()),
+            }
         }
     }
 
@@ -365,19 +435,35 @@ fn allocate_capacity_constrained(
     let mut unassigned_rows = Vec::new();
 
     while !pending.is_empty() {
+        // Group pending demands by origin
+        let mut demands_by_origin: HashMap<usize, Vec<Demand>> = HashMap::new();
+        for demand in &pending {
+            demands_by_origin
+                .entry(demand.origin)
+                .or_insert_with(Vec::new)
+                .push(demand.clone());
+        }
+
         let mut route_rows = Vec::new();
         let mut next_pending = Vec::new();
 
-        for demand in &pending {
-            match graph.shortest_path(demand.origin, demand.destination, Some(&residual_capacity)) {
-                Some((edge_path, cost)) => route_rows.push(Route {
-                    origin: demand.origin,
-                    destination: demand.destination,
-                    flow: demand.flow,
-                    edge_path,
-                    cost,
-                }),
-                None => unassigned_rows.push(demand.clone()),
+        // Process each origin with single-source shortest paths
+        for (origin, origin_demands) in demands_by_origin {
+            let paths = graph.single_source_shortest_paths(origin, Some(&residual_capacity));
+
+            for demand in origin_demands {
+                match paths.get(&demand.destination) {
+                    Some((edge_path, cost)) => {
+                        route_rows.push(Route {
+                            origin: demand.origin,
+                            destination: demand.destination,
+                            flow: demand.flow,
+                            edge_path: edge_path.clone(),
+                            cost: *cost,
+                        });
+                    }
+                    None => unassigned_rows.push(demand),
+                }
             }
         }
 
