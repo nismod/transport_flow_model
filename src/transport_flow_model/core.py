@@ -22,13 +22,13 @@ def allocate(
     directed: bool = True,
 ) -> dict[str, pa.Table]:
     """Allocate OD demand"""
-    result = _core.allocate_ipc(
-        _to_ipc_stream(network),
-        _to_ipc_stream(od),
+    result = _core.allocate_ffi(
+        _to_table(network),
+        _to_table(od),
         capacity_constrained,
         directed,
     )
-    return {name: _from_ipc_stream(payload) for name, payload in result.items()}
+    return {name: _from_ffi_stream(payload) for name, payload in result.items()}
 
 
 def disrupt(
@@ -40,14 +40,14 @@ def disrupt(
     directed: bool = True,
 ) -> dict[str, pa.Table]:
     """Reroute failed-edge flows"""
-    result = _core.disrupt_ipc(
-        _to_ipc_stream(network),
-        _to_ipc_stream(od_flows),
+    result = _core.disrupt_ffi(
+        _to_table(network),
+        _to_table(od_flows),
         failed_edges,
         capacity_constrained,
         directed,
     )
-    return {name: _from_ipc_stream(payload) for name, payload in result.items()}
+    return {name: _from_ffi_stream(payload) for name, payload in result.items()}
 
 
 def _to_table(data: pa.Table | pa.RecordBatch | pd.DataFrame) -> pa.Table:
@@ -62,14 +62,6 @@ def _to_table(data: pa.Table | pa.RecordBatch | pd.DataFrame) -> pa.Table:
     )
 
 
-def _to_ipc_stream(data: pa.Table | pa.RecordBatch | pd.DataFrame) -> bytes:
-    table = _to_table(data)
-    sink = pa.BufferOutputStream()
-    with pa.ipc.new_stream(sink, table.schema) as writer:
-        writer.write_table(table)
-    return sink.getvalue().to_pybytes()
-
-
-def _from_ipc_stream(data: bytes) -> pa.Table:
-    with pa.ipc.open_stream(data) as reader:
-        return reader.read_all()
+def _from_ffi_stream(data: object) -> pa.Table:
+    reader = pa.RecordBatchReader._import_from_c_capsule(data)
+    return reader.read_all()

@@ -13,46 +13,58 @@ use arrow::record_batch::RecordBatch;
 use crate::core::{AllocationOutput, Demand, DisruptionOutput, Edge, EdgeFlow, Loss, OdFlow};
 
 pub fn read_network_ipc(bytes: &[u8]) -> Result<Vec<Edge>, String> {
+    read_network_batches(&read_batches(bytes)?)
+}
+
+pub fn read_demands_ipc(bytes: &[u8]) -> Result<Vec<Demand>, String> {
+    read_demands_batches(&read_batches(bytes)?)
+}
+
+pub fn read_od_flows_ipc(bytes: &[u8]) -> Result<Vec<OdFlow>, String> {
+    read_od_flows_batches(&read_batches(bytes)?)
+}
+
+pub fn read_network_batches(batches: &[RecordBatch]) -> Result<Vec<Edge>, String> {
     let mut edges = Vec::new();
-    for batch in read_batches(bytes)? {
-        let from = required_column(&batch, "edge_from")?;
-        let to = required_column(&batch, "edge_to")?;
-        let id = required_column(&batch, "edge_id")?;
+    for batch in batches {
+        let from = required_column(batch, "edge_from")?;
+        let to = required_column(batch, "edge_to")?;
+        let id = required_column(batch, "edge_id")?;
         for row in 0..batch.num_rows() {
             edges.push(Edge {
                 from: integer_value(from.as_ref(), "edge_from", row)?,
                 to: integer_value(to.as_ref(), "edge_to", row)?,
                 id: integer_value(id.as_ref(), "edge_id", row)?,
-                cost: numeric_value_or_default(&batch, "cost", row, 1.0)?,
-                capacity: optional_numeric_value(&batch, "capacity", row)?,
-                flow: numeric_value_or_default(&batch, "flow", row, 0.0)?,
+                cost: numeric_value_or_default(batch, "cost", row, 1.0)?,
+                capacity: optional_numeric_value(batch, "capacity", row)?,
+                flow: numeric_value_or_default(batch, "flow", row, 0.0)?,
             });
         }
     }
     Ok(edges)
 }
 
-pub fn read_demands_ipc(bytes: &[u8]) -> Result<Vec<Demand>, String> {
+pub fn read_demands_batches(batches: &[RecordBatch]) -> Result<Vec<Demand>, String> {
     let mut demands = Vec::new();
-    for batch in read_batches(bytes)? {
-        let origins = required_column(&batch, "origin_id")?;
-        let destinations = required_column(&batch, "destination_id")?;
+    for batch in batches {
+        let origins = required_column(batch, "origin_id")?;
+        let destinations = required_column(batch, "destination_id")?;
         for row in 0..batch.num_rows() {
             demands.push(Demand {
                 origin: integer_value(origins.as_ref(), "origin_id", row)?,
                 destination: integer_value(destinations.as_ref(), "destination_id", row)?,
-                flow: required_numeric_value(&batch, "flow", row)?,
+                flow: required_numeric_value(batch, "flow", row)?,
             });
         }
     }
     Ok(demands)
 }
 
-pub fn read_od_flows_ipc(bytes: &[u8]) -> Result<Vec<OdFlow>, String> {
+pub fn read_od_flows_batches(batches: &[RecordBatch]) -> Result<Vec<OdFlow>, String> {
     let mut od_flows = Vec::new();
-    for batch in read_batches(bytes)? {
-        let origins = required_column(&batch, "origin_id")?;
-        let destinations = required_column(&batch, "destination_id")?;
+    for batch in batches {
+        let origins = required_column(batch, "origin_id")?;
+        let destinations = required_column(batch, "destination_id")?;
         let edge_paths = batch
             .column_by_name("edge_path")
             .ok_or_else(|| "missing required column edge_path".to_string())?;
@@ -60,9 +72,9 @@ pub fn read_od_flows_ipc(bytes: &[u8]) -> Result<Vec<OdFlow>, String> {
             od_flows.push(OdFlow {
                 origin: integer_value(origins.as_ref(), "origin_id", row)?,
                 destination: integer_value(destinations.as_ref(), "destination_id", row)?,
-                flow: required_numeric_value(&batch, "flow", row)?,
+                flow: required_numeric_value(batch, "flow", row)?,
                 edge_path: edge_path_value(edge_paths.as_ref(), row)?,
-                cost: required_numeric_value(&batch, "cost", row)?,
+                cost: required_numeric_value(batch, "cost", row)?,
             });
         }
     }
@@ -70,21 +82,44 @@ pub fn read_od_flows_ipc(bytes: &[u8]) -> Result<Vec<OdFlow>, String> {
 }
 
 pub fn allocation_to_ipc(output: &AllocationOutput) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
+    let (od_flows, network_flows, unassigned_od) = allocation_to_batches(output)?;
     Ok((
-        od_flows_to_ipc(&output.od_flows)?,
-        network_flows_to_ipc(&output.network_flows)?,
-        demands_to_ipc(&output.unassigned_od)?,
+        write_batch(od_flows)?,
+        write_batch(network_flows)?,
+        write_batch(unassigned_od)?,
     ))
 }
 
 pub fn disruption_to_ipc(
     output: &DisruptionOutput,
 ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>), String> {
+    let (rerouted_flows, network_flows, isolated_od, losses) = disruption_to_batches(output)?;
     Ok((
-        od_flows_to_ipc(&output.rerouted_flows)?,
-        network_flows_to_ipc(&output.network_flows)?,
-        demands_to_ipc(&output.isolated_od)?,
-        losses_to_ipc(&output.losses)?,
+        write_batch(rerouted_flows)?,
+        write_batch(network_flows)?,
+        write_batch(isolated_od)?,
+        write_batch(losses)?,
+    ))
+}
+
+pub fn allocation_to_batches(
+    output: &AllocationOutput,
+) -> Result<(RecordBatch, RecordBatch, RecordBatch), String> {
+    Ok((
+        od_flows_batch(&output.od_flows)?,
+        network_flows_batch(&output.network_flows)?,
+        demands_batch(&output.unassigned_od)?,
+    ))
+}
+
+pub fn disruption_to_batches(
+    output: &DisruptionOutput,
+) -> Result<(RecordBatch, RecordBatch, RecordBatch, RecordBatch), String> {
+    Ok((
+        od_flows_batch(&output.rerouted_flows)?,
+        network_flows_batch(&output.network_flows)?,
+        demands_batch(&output.isolated_od)?,
+        losses_batch(&output.losses)?,
     ))
 }
 
@@ -107,7 +142,7 @@ fn write_batch(batch: RecordBatch) -> Result<Vec<u8>, String> {
     Ok(buffer)
 }
 
-fn od_flows_to_ipc(rows: &[OdFlow]) -> Result<Vec<u8>, String> {
+fn od_flows_batch(rows: &[OdFlow]) -> Result<RecordBatch, String> {
     let mut path_builder = ListBuilder::new(UInt64Builder::new());
     for row in rows {
         for edge_id in &row.edge_path {
@@ -127,7 +162,7 @@ fn od_flows_to_ipc(rows: &[OdFlow]) -> Result<Vec<u8>, String> {
         ),
         Field::new("cost", DataType::Float64, false),
     ]));
-    let batch = RecordBatch::try_new(
+    RecordBatch::try_new(
         schema,
         vec![
             integer_array(rows.iter().map(|row| row.origin)),
@@ -137,11 +172,10 @@ fn od_flows_to_ipc(rows: &[OdFlow]) -> Result<Vec<u8>, String> {
             float_array(rows.iter().map(|row| row.cost)),
         ],
     )
-    .map_err(|error| error.to_string())?;
-    write_batch(batch)
+    .map_err(|error| error.to_string())
 }
 
-fn network_flows_to_ipc(rows: &[EdgeFlow]) -> Result<Vec<u8>, String> {
+fn network_flows_batch(rows: &[EdgeFlow]) -> Result<RecordBatch, String> {
     let schema = Arc::new(Schema::new(vec![
         Field::new("edge_id", DataType::UInt64, false),
         Field::new("edge_from", DataType::UInt64, false),
@@ -150,7 +184,7 @@ fn network_flows_to_ipc(rows: &[EdgeFlow]) -> Result<Vec<u8>, String> {
         Field::new("capacity", DataType::Float64, true),
         Field::new("flow", DataType::Float64, false),
     ]));
-    let batch = RecordBatch::try_new(
+    RecordBatch::try_new(
         schema,
         vec![
             integer_array(rows.iter().map(|row| row.edge_id)),
@@ -163,17 +197,16 @@ fn network_flows_to_ipc(rows: &[EdgeFlow]) -> Result<Vec<u8>, String> {
             float_array(rows.iter().map(|row| row.flow)),
         ],
     )
-    .map_err(|error| error.to_string())?;
-    write_batch(batch)
+    .map_err(|error| error.to_string())
 }
 
-fn demands_to_ipc(rows: &[Demand]) -> Result<Vec<u8>, String> {
+fn demands_batch(rows: &[Demand]) -> Result<RecordBatch, String> {
     let schema = Arc::new(Schema::new(vec![
         Field::new("origin_id", DataType::UInt64, false),
         Field::new("destination_id", DataType::UInt64, false),
         Field::new("flow", DataType::Float64, false),
     ]));
-    let batch = RecordBatch::try_new(
+    RecordBatch::try_new(
         schema,
         vec![
             integer_array(rows.iter().map(|row| row.origin)),
@@ -181,11 +214,10 @@ fn demands_to_ipc(rows: &[Demand]) -> Result<Vec<u8>, String> {
             float_array(rows.iter().map(|row| row.flow)),
         ],
     )
-    .map_err(|error| error.to_string())?;
-    write_batch(batch)
+    .map_err(|error| error.to_string())
 }
 
-fn losses_to_ipc(rows: &[Loss]) -> Result<Vec<u8>, String> {
+fn losses_batch(rows: &[Loss]) -> Result<RecordBatch, String> {
     let schema = Arc::new(Schema::new(vec![
         Field::new("origin_id", DataType::UInt64, false),
         Field::new("destination_id", DataType::UInt64, false),
@@ -194,7 +226,7 @@ fn losses_to_ipc(rows: &[Loss]) -> Result<Vec<u8>, String> {
         Field::new("disrupted_cost", DataType::Float64, false),
         Field::new("rerouting_loss", DataType::Float64, false),
     ]));
-    let batch = RecordBatch::try_new(
+    RecordBatch::try_new(
         schema,
         vec![
             integer_array(rows.iter().map(|row| row.origin)),
@@ -205,8 +237,7 @@ fn losses_to_ipc(rows: &[Loss]) -> Result<Vec<u8>, String> {
             float_array(rows.iter().map(|row| row.rerouting_loss)),
         ],
     )
-    .map_err(|error| error.to_string())?;
-    write_batch(batch)
+    .map_err(|error| error.to_string())
 }
 
 fn required_column<'a>(batch: &'a RecordBatch, name: &str) -> Result<&'a ArrayRef, String> {
