@@ -42,10 +42,18 @@ fn disrupt_ffi<'py>(
     directed: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     let network = arrow_ffi::read_network_ffi(network).map_err(PyValueError::new_err)?;
-    let od_flows = arrow_ffi::read_od_flows_ffi(od_flows).map_err(PyValueError::new_err)?;
-    let output = core::disrupt(
+    let network_edge_capacity = network
+        .iter()
+        .map(|edge| edge.id)
+        .max()
+        .map_or(0, |edge_id| edge_id + 1);
+    let disruption_inputs =
+        arrow_ffi::read_disruption_inputs_ffi(od_flows, &failed_edges, network_edge_capacity)
+            .map_err(PyValueError::new_err)?;
+    let output = core::disrupt_with_preprocessed(
         &network,
-        &od_flows,
+        &disruption_inputs.affected_flows,
+        &disruption_inputs.current_edge_flows,
         &failed_edges,
         capacity_constrained,
         directed,

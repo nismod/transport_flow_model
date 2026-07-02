@@ -312,8 +312,11 @@ pub fn disrupt(
     capacity_constrained: bool,
     directed: bool,
 ) -> DisruptionOutput {
-    let failed_edge_flags = edge_flags(failed_edges, max_edge_id(edges, existing_flows));
-    let affected_flows: Vec<OdFlow> = existing_flows
+    let max_known_edge_id = max_edge_id(edges, existing_flows);
+    let edge_flow_capacity = max_known_edge_id.map_or(0, |edge_id| edge_id + 1);
+    let current_edge_flows = flow_by_edge(existing_flows, edge_flow_capacity);
+    let failed_edge_flags = edge_flags(failed_edges, max_known_edge_id);
+    let affected_flows = existing_flows
         .iter()
         .filter(|flow| {
             flow.edge_path
@@ -321,10 +324,40 @@ pub fn disrupt(
                 .any(|edge_id| failed_edge_flags.get(*edge_id).copied().unwrap_or(false))
         })
         .cloned()
-        .collect();
+        .collect::<Vec<_>>();
+
+    disrupt_with_preprocessed(
+        edges,
+        &affected_flows,
+        &current_edge_flows,
+        failed_edges,
+        capacity_constrained,
+        directed,
+    )
+}
+
+pub fn disrupt_with_preprocessed(
+    edges: &[Edge],
+    affected_flows: &[OdFlow],
+    current_edge_flows: &[f64],
+    failed_edges: &[usize],
+    capacity_constrained: bool,
+    directed: bool,
+) -> DisruptionOutput {
+    let max_known_edge_id = [
+        max_edge_id(edges, affected_flows),
+        current_edge_flows
+            .len()
+            .checked_sub(1)
+            .filter(|_| !current_edge_flows.is_empty()),
+    ]
+    .into_iter()
+    .flatten()
+    .max();
+    let failed_edge_flags = edge_flags(failed_edges, max_known_edge_id);
 
     let post_disruption_edges =
-        edges_with_flows_removed_from_affected_paths(edges, existing_flows, &affected_flows);
+        edges_with_flows_removed_from_affected_paths(edges, current_edge_flows, affected_flows);
     let mut post_disruption_edges: Vec<Edge> = post_disruption_edges
         .into_iter()
         .map(|mut edge| {
@@ -578,15 +611,12 @@ fn edge_flows_from_edges(edges: &[Edge]) -> Vec<EdgeFlow> {
 
 fn edges_with_flows_removed_from_affected_paths(
     edges: &[Edge],
-    existing_flows: &[OdFlow],
+    current_edge_flows: &[f64],
     affected_flows: &[OdFlow],
 ) -> Vec<Edge> {
-    let edge_flow_capacity = max_edge_id(edges, existing_flows)
-        .into_iter()
-        .chain(max_edge_id(edges, affected_flows))
-        .max()
-        .map_or(0, |edge_id| edge_id + 1);
-    let current_flows = flow_by_edge(existing_flows, edge_flow_capacity);
+    let edge_flow_capacity = max_edge_id(edges, affected_flows)
+        .map_or(0, |edge_id| edge_id + 1)
+        .max(current_edge_flows.len());
     let affected_by_edge = flow_by_edge(affected_flows, edge_flow_capacity);
     let has_existing_edge_loads = edges.iter().any(|edge| edge.flow.abs() > CAPACITY_EPSILON);
 
@@ -596,7 +626,7 @@ fn edges_with_flows_removed_from_affected_paths(
             let base_flow = if has_existing_edge_loads {
                 edge.flow
             } else {
-                current_flows.get(edge.id).copied().unwrap_or(0.0)
+                current_edge_flows.get(edge.id).copied().unwrap_or(0.0)
             };
             let mut next = edge.clone();
             next.flow =

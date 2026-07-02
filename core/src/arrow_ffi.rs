@@ -1,6 +1,10 @@
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
+use arrow::array::{
+    Array, Float32Array, Float64Array, Int32Array, Int64Array, LargeListArray, ListArray,
+    UInt32Array, UInt64Array,
+};
 use arrow::error::ArrowError;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use arrow::record_batch::{RecordBatch, RecordBatchIterator};
@@ -10,7 +14,12 @@ use pyo3::types::PyCapsuleMethods;
 use pyo3::types::{PyAny, PyCapsule};
 
 use crate::arrow_ipc;
-use crate::core::{AllocationOutput, DisruptionOutput};
+use crate::core::{AllocationOutput, DisruptionOutput, OdFlow};
+
+pub struct DisruptionInputs {
+    pub affected_flows: Vec<OdFlow>,
+    pub current_edge_flows: Vec<f64>,
+}
 
 unsafe extern "C" fn drop_arrow_array_stream_capsule(capsule: *mut ffi::PyObject) {
     let ptr = unsafe { ffi::PyCapsule_GetPointer(capsule, c"arrow_array_stream".as_ptr()) };
@@ -82,9 +91,13 @@ pub fn read_demands_ffi(table: &Bound<'_, PyAny>) -> Result<Vec<crate::core::Dem
     arrow_ipc::read_demands_batches(&batches)
 }
 
-pub fn read_od_flows_ffi(table: &Bound<'_, PyAny>) -> Result<Vec<crate::core::OdFlow>, String> {
+pub fn read_disruption_inputs_ffi(
+    table: &Bound<'_, PyAny>,
+    failed_edges: &[usize],
+    initial_edge_capacity: usize,
+) -> Result<DisruptionInputs, String> {
     let batches = read_batches_from_pyarrow_table(table)?;
-    arrow_ipc::read_od_flows_batches(&batches)
+    read_disruption_inputs_batches(&batches, failed_edges, initial_edge_capacity)
 }
 
 pub fn allocation_to_ffi<'py>(
@@ -119,4 +132,165 @@ pub fn disruption_to_ffi<'py>(
         batches_to_pyarrow_stream(py, vec![isolated_od])?,
         batches_to_pyarrow_stream(py, vec![losses])?,
     ))
+}
+
+fn read_disruption_inputs_batches(
+    batches: &[RecordBatch],
+    failed_edges: &[usize],
+    initial_edge_capacity: usize,
+) -> Result<DisruptionInputs, String> {
+    let mut failed_edge_flags = vec![false; initial_edge_capacity.max(1)];
+    for edge_id in failed_edges {
+        if *edge_id >= failed_edge_flags.len() {
+            failed_edge_flags.resize(*edge_id + 1, false);
+        }
+        failed_edge_flags[*edge_id] = true;
+    }
+
+    let mut current_edge_flows = vec![0.0; initial_edge_capacity];
+    let mut affected_flows = Vec::new();
+
+    for batch in batches {
+        let origins = required_column(batch, "origin_id")?;
+        let destinations = required_column(batch, "destination_id")?;
+        let flows = required_column(batch, "flow")?;
+        let costs = required_column(batch, "cost")?;
+        let edge_paths = required_column(batch, "edge_path")?;
+
+        for row in 0..batch.num_rows() {
+            let origin = integer_value(origins.as_ref(), "origin_id", row)?;
+            let destination = integer_value(destinations.as_ref(), "destination_id", row)?;
+            let flow = numeric_value(flows.as_ref(), "flow", row)?;
+            let cost = numeric_value(costs.as_ref(), "cost", row)?;
+            let edge_path = edge_path_value(edge_paths.as_ref(), row)?;
+
+            let mut is_affected = false;
+            for edge_id in &edge_path {
+                if *edge_id >= current_edge_flows.len() {
+                    current_edge_flows.resize(*edge_id + 1, 0.0);
+                }
+                current_edge_flows[*edge_id] += flow;
+
+                if *edge_id >= failed_edge_flags.len() {
+                    failed_edge_flags.resize(*edge_id + 1, false);
+                }
+                if failed_edge_flags[*edge_id] {
+                    is_affected = true;
+                }
+            }
+
+            if is_affected {
+                affected_flows.push(OdFlow {
+                    origin,
+                    destination,
+                    flow,
+                    edge_path,
+                    cost,
+                });
+            }
+        }
+    }
+
+    Ok(DisruptionInputs {
+        affected_flows,
+        current_edge_flows,
+    })
+}
+
+fn required_column<'a>(
+    batch: &'a RecordBatch,
+    name: &str,
+) -> Result<&'a arrow::array::ArrayRef, String> {
+    batch
+        .column_by_name(name)
+        .ok_or_else(|| format!("missing required column {name}"))
+}
+
+fn integer_value(array: &dyn Array, name: &str, row: usize) -> Result<usize, String> {
+    if array.is_null(row) {
+        return Err(format!("column {name} cannot contain null values"));
+    }
+    if let Some(array) = array.as_any().downcast_ref::<UInt64Array>() {
+        usize::try_from(array.value(row)).map_err(|_| format!("column {name} exceeds usize"))
+    } else if let Some(array) = array.as_any().downcast_ref::<UInt32Array>() {
+        Ok(array.value(row) as usize)
+    } else if let Some(array) = array.as_any().downcast_ref::<Int64Array>() {
+        usize::try_from(array.value(row)).map_err(|_| format!("column {name} must be non-negative"))
+    } else if let Some(array) = array.as_any().downcast_ref::<Int32Array>() {
+        usize::try_from(array.value(row)).map_err(|_| format!("column {name} must be non-negative"))
+    } else {
+        Err(format!("column {name} must be an integer id"))
+    }
+}
+
+fn numeric_value(array: &dyn Array, name: &str, row: usize) -> Result<f64, String> {
+    if array.is_null(row) {
+        return Err(format!("column {name} cannot contain null values"));
+    }
+    if let Some(array) = array.as_any().downcast_ref::<Float64Array>() {
+        Ok(array.value(row))
+    } else if let Some(array) = array.as_any().downcast_ref::<Float32Array>() {
+        Ok(array.value(row) as f64)
+    } else if let Some(array) = array.as_any().downcast_ref::<Int64Array>() {
+        Ok(array.value(row) as f64)
+    } else if let Some(array) = array.as_any().downcast_ref::<Int32Array>() {
+        Ok(array.value(row) as f64)
+    } else if let Some(array) = array.as_any().downcast_ref::<UInt64Array>() {
+        Ok(array.value(row) as f64)
+    } else if let Some(array) = array.as_any().downcast_ref::<UInt32Array>() {
+        Ok(array.value(row) as f64)
+    } else {
+        Err(format!("column {name} must be numeric"))
+    }
+}
+
+fn edge_path_value(array: &dyn Array, row: usize) -> Result<Vec<usize>, String> {
+    if array.is_null(row) {
+        return Err("edge_path cannot contain null values".to_string());
+    }
+
+    if let Some(paths) = array.as_any().downcast_ref::<ListArray>() {
+        let values = paths.value(row);
+        return edge_path_values(values.as_ref());
+    }
+
+    if let Some(paths) = array.as_any().downcast_ref::<LargeListArray>() {
+        let values = paths.value(row);
+        return edge_path_values(values.as_ref());
+    }
+
+    Err("edge_path must be list<uint64> or another integer list".to_string())
+}
+
+fn edge_path_values(values: &dyn Array) -> Result<Vec<usize>, String> {
+    if let Some(values) = values.as_any().downcast_ref::<UInt64Array>() {
+        return Ok((0..values.len())
+            .map(|index| {
+                usize::try_from(values.value(index))
+                    .map_err(|_| "edge_path value exceeds usize".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?);
+    }
+    if let Some(values) = values.as_any().downcast_ref::<UInt32Array>() {
+        return Ok((0..values.len())
+            .map(|index| values.value(index) as usize)
+            .collect());
+    }
+    if let Some(values) = values.as_any().downcast_ref::<Int64Array>() {
+        return (0..values.len())
+            .map(|index| {
+                usize::try_from(values.value(index))
+                    .map_err(|_| "edge_path values must be non-negative".to_string())
+            })
+            .collect();
+    }
+    if let Some(values) = values.as_any().downcast_ref::<Int32Array>() {
+        return (0..values.len())
+            .map(|index| {
+                usize::try_from(values.value(index))
+                    .map_err(|_| "edge_path values must be non-negative".to_string())
+            })
+            .collect();
+    }
+    Err("edge_path list values must be integer ids".to_string())
 }
