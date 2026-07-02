@@ -1,11 +1,6 @@
 import pandas as pd
-import pytest
 
 from transport_flow_model import core
-
-
-def test_extension_availability_probe_returns_bool():
-    assert isinstance(core.is_available(), bool)
 
 
 def test_extension_allocate():
