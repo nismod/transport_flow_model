@@ -61,7 +61,7 @@ fn disrupt_ipc<'py>(
 }
 
 #[pymodule]
-fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_function(wrap_pyfunction!(allocate_ipc, m)?)?;
     m.add_function(wrap_pyfunction!(disrupt_ipc, m)?)?;

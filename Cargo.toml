@@ -1,12 +1,12 @@
 [package]
-name = "transport-flow-model-rust"
+name = "transport-flow-model"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.86"
 
 [lib]
-name = "_rust"
-path = "rust/src/lib.rs"
+name = "_core"
+path = "core/src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
@@ -18,5 +18,5 @@ criterion = { version = "0.8.2", default-features = false, features = ["cargo_be
 
 [[bench]]
 name = "core"
-path = "rust/benches/core.rs"
+path = "core/benches/core.rs"
 harness = false

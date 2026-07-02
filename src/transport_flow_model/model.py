@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from heapq import heappop, heappush
-from importlib import import_module
-from math import inf, isfinite
-from os import environ
+from math import isfinite
 from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
+
+import transport_flow_model.core as core
 
 FLOW_COLUMNS = ("origin_id", "destination_id", "flow")
 OD_FLOW_COLUMNS = ("origin_id", "destination_id", "flow", "edge_path", "cost")
@@ -24,8 +23,6 @@ LOSS_COLUMNS = (
     "rerouting_loss",
 )
 CAPACITY_EPSILON = 1.0e-9
-_RUST_BACKEND = None
-_RUST_BACKEND_LOADED = False
 
 
 def _coerce_integral_numeric_columns(data: pd.DataFrame) -> pd.DataFrame:
@@ -62,26 +59,6 @@ def _dataframe_delegate(instance, name):
     raise AttributeError(
         f"{instance.__class__.__name__!r} object has no attribute {name!r}"
     )
-
-
-def _get_rust_backend():
-    """Return the optional Rust helper module when the native extension is built."""
-    global _RUST_BACKEND, _RUST_BACKEND_LOADED
-    if environ.get("TRANSPORT_FLOW_MODEL_USE_RUST", "1").lower() in {
-        "0",
-        "false",
-        "no",
-    }:
-        return None
-    if not _RUST_BACKEND_LOADED:
-        _RUST_BACKEND_LOADED = True
-        try:
-            rust_backend = import_module("transport_flow_model.rust")
-        except ImportError:
-            rust_backend = None
-        if rust_backend is not None and rust_backend.is_available():
-            _RUST_BACKEND = rust_backend
-    return _RUST_BACKEND
 
 
 @dataclass
@@ -368,16 +345,11 @@ class Network:
         directed: bool = True,
     ) -> AllocationResult:
         """Allocate OD flows to least-cost paths on this network."""
-        rust_result = self._allocate_rust(
+        return self._allocate(
             od,
             capacity_constrained=capacity_constrained,
             directed=directed,
         )
-        if rust_result is not None:
-            return rust_result
-        if capacity_constrained:
-            return self._allocate_capacity_constrained(od, directed=directed)
-        return self._allocate_unconstrained(od, directed=directed)
 
     def disrupt(
         self,
@@ -388,105 +360,43 @@ class Network:
         directed: bool = True,
     ) -> DisruptionResult:
         """Reroute flows whose existing paths include any failed edge."""
-        rust_result = self._disrupt_rust(
+        return self._disrupt(
             od_flows,
             failed_edges,
             capacity_constrained=capacity_constrained,
             directed=directed,
         )
-        if rust_result is not None:
-            return rust_result
 
-        failed_edge_set = set(failed_edges)
-        flow_data = od_flows.to_dataframe()
-        affected_mask = flow_data["edge_path"].map(
-            lambda path: bool(failed_edge_set.intersection(path))
-        )
-        affected_flows = flow_data[affected_mask].copy()
-        affected_od_flows = ODFlows(affected_flows)
-        post_disruption_network_data = self._with_flows_removed_from_affected_paths(
-            od_flows,
-            affected_od_flows,
-        )
-        post_disruption_network_data.loc[
-            post_disruption_network_data["edge_id"].isin(failed_edge_set),
-            "flow",
-        ] = 0
-
-        if affected_flows.empty:
-            rerouted_flows = ODFlows(pd.DataFrame(columns=list(OD_FLOW_COLUMNS)))
-            isolated_od = OD(pd.DataFrame(columns=list(FLOW_COLUMNS)))
-            losses = OD(pd.DataFrame(columns=list(LOSS_COLUMNS)))
-            network_flows = NetworkFlows(post_disruption_network_data)
-            return DisruptionResult(
-                rerouted_flows=rerouted_flows,
-                network_flows=network_flows,
-                isolated_od=isolated_od,
-                losses=losses,
-            )
-
-        if capacity_constrained:
-            reroute_network_data = post_disruption_network_data
-        else:
-            reroute_network_data = self.to_dataframe()
-        reroute_network_data = reroute_network_data[
-            ~reroute_network_data["edge_id"].isin(failed_edge_set)
-        ].reset_index(drop=True)
-
-        reroute_network = Network(reroute_network_data)
-        affected_od = OD(affected_flows.loc[:, list(FLOW_COLUMNS)])
-        allocation = reroute_network.allocate(
-            affected_od,
-            capacity_constrained=capacity_constrained,
-            directed=directed,
-        )
-        network_flows = NetworkFlows.from_network_and_od_flows(
-            Network(post_disruption_network_data),
-            allocation.od_flows,
-        )
-        losses = OD.losses_from_flows(affected_od_flows, allocation.od_flows)
-
-        return DisruptionResult(
-            rerouted_flows=allocation.od_flows,
-            network_flows=network_flows,
-            isolated_od=allocation.unassigned_od,
-            losses=losses,
-        )
-
-    def _allocate_rust(
+    def _allocate(
         self,
         od: OD,
         *,
         capacity_constrained: bool,
         directed: bool,
-    ) -> AllocationResult | None:
-        rust_backend = _get_rust_backend()
-        if rust_backend is None:
-            return None
-
+    ) -> AllocationResult:
         network_data = self.to_dataframe()
         od_data = od.to_dataframe()
-        normalized = _normalize_rust_inputs(network_data, od_data)
+        normalized = _normalize(network_data, od_data)
         if normalized is None:
             return None
         network_input, od_input, node_id_map, edge_id_map, edge_value_to_id = normalized
 
-        result = rust_backend.allocate_arrow(
+        result = core.allocate(
             network_input,
             od_input,
             capacity_constrained=capacity_constrained,
             directed=directed,
         )
-        od_flows = _rust_od_flows_to_dataframe(
+        od_flows = _od_flows_to_dataframe(
             result["od_flows"].to_pandas(),
             node_id_map=node_id_map,
             edge_id_map=edge_id_map,
         )
-        unassigned_od = _rust_od_to_dataframe(
+        unassigned_od = _od_to_dataframe(
             result["unassigned_od"].to_pandas(),
             node_id_map=node_id_map,
         )
-        network_flows = _network_flows_from_rust_result(
+        network_flows = _network_flows_from_result(
             network_data,
             result["network_flows"].to_pandas(),
             edge_value_to_id=edge_value_to_id,
@@ -498,21 +408,18 @@ class Network:
             unassigned_od=OD(unassigned_od),
         )
 
-    def _disrupt_rust(
+    def _disrupt(
         self,
         od_flows: ODFlows,
         failed_edges: list[str],
         *,
         capacity_constrained: bool,
         directed: bool,
-    ) -> DisruptionResult | None:
-        rust_backend = _get_rust_backend()
-        if rust_backend is None:
-            return None
+    ) -> DisruptionResult:
 
         network_data = self.to_dataframe()
         od_flow_data = od_flows.to_dataframe()
-        normalized = _normalize_rust_inputs(network_data, od_flow_data)
+        normalized = _normalize(network_data, od_flow_data)
         if normalized is None:
             return None
         network_input, od_flows_input, node_id_map, edge_id_map, edge_value_to_id = (
@@ -530,27 +437,27 @@ class Network:
         except TypeError:
             return None
 
-        result = rust_backend.disrupt_arrow(
+        result = core.disrupt(
             network_input,
             od_flows_input,
             failed_edge_ids,
             capacity_constrained=capacity_constrained,
             directed=directed,
         )
-        rerouted_flows = _rust_od_flows_to_dataframe(
+        rerouted_flows = _od_flows_to_dataframe(
             result["rerouted_flows"].to_pandas(),
             node_id_map=node_id_map,
             edge_id_map=edge_id_map,
         )
-        isolated_od = _rust_od_to_dataframe(
+        isolated_od = _od_to_dataframe(
             result["isolated_od"].to_pandas(),
             node_id_map=node_id_map,
         )
-        losses = _rust_losses_to_dataframe(
+        losses = _losses_to_dataframe(
             result["losses"].to_pandas(),
             node_id_map=node_id_map,
         )
-        network_flows = _network_flows_from_rust_result(
+        network_flows = _network_flows_from_result(
             network_data,
             result["network_flows"].to_pandas(),
             edge_value_to_id=edge_value_to_id,
@@ -562,222 +469,6 @@ class Network:
             isolated_od=OD(isolated_od),
             losses=OD(losses),
         )
-
-    def _allocate_unconstrained(self, od: OD, *, directed: bool) -> AllocationResult:
-        network_data = self.to_dataframe()
-        flow_rows = []
-        unassigned_rows = []
-
-        # Group demands by origin for efficient single-source shortest paths
-        od_by_origin = defaultdict(list)
-        for row in od.to_dataframe().itertuples(index=False):
-            od_by_origin[row.origin_id].append(row)
-
-        # For each origin, compute shortest paths to all destinations
-        for origin_id, demands in od_by_origin.items():
-            paths = _single_source_shortest_paths(
-                network_data,
-                origin_id,
-                directed=directed,
-            )
-
-            for demand in demands:
-                if demand.origin_id == demand.destination_id:
-                    flow_rows.append(
-                        {
-                            "origin_id": demand.origin_id,
-                            "destination_id": demand.destination_id,
-                            "flow": demand.flow,
-                            "edge_path": [],
-                            "cost": 0.0,
-                        }
-                    )
-                elif demand.destination_id in paths:
-                    path, cost = paths[demand.destination_id]
-                    if path is not None:
-                        flow_rows.append(
-                            {
-                                "origin_id": demand.origin_id,
-                                "destination_id": demand.destination_id,
-                                "flow": demand.flow,
-                                "edge_path": path,
-                                "cost": cost,
-                            }
-                        )
-                    else:
-                        unassigned_rows.append(
-                            {
-                                "origin_id": demand.origin_id,
-                                "destination_id": demand.destination_id,
-                                "flow": demand.flow,
-                            }
-                        )
-                else:
-                    unassigned_rows.append(
-                        {
-                            "origin_id": demand.origin_id,
-                            "destination_id": demand.destination_id,
-                            "flow": demand.flow,
-                        }
-                    )
-
-        od_flows = ODFlows(_frame_from_records(flow_rows, OD_FLOW_COLUMNS))
-        unassigned_od = OD(_frame_from_records(unassigned_rows, FLOW_COLUMNS))
-        network_flows = NetworkFlows.from_network_and_od_flows(self, od_flows)
-        return AllocationResult(
-            od_flows=od_flows,
-            network_flows=network_flows,
-            unassigned_od=unassigned_od,
-        )
-
-    def _allocate_capacity_constrained(
-        self, od: OD, *, directed: bool
-    ) -> AllocationResult:
-        network_data = self.to_dataframe()
-        residual_capacity = _initial_residual_capacity(network_data)
-        pending = od.to_dataframe().loc[:, list(FLOW_COLUMNS)].copy()
-        allocated_rows = []
-        unassigned_rows = []
-
-        while not pending.empty:
-            route_rows = []
-            next_pending = []
-
-            # Group pending demands by origin for efficient single-source shortest paths
-            pending_by_origin = defaultdict(list)
-            for row in pending.itertuples(index=False):
-                pending_by_origin[row.origin_id].append(row)
-
-            # For each origin, compute shortest paths to all potential destinations
-            for origin_id, demands in pending_by_origin.items():
-                paths = _single_source_shortest_paths(
-                    network_data,
-                    origin_id,
-                    directed=directed,
-                    residual_capacity=residual_capacity,
-                )
-
-                for demand in demands:
-                    if demand.origin_id == demand.destination_id:
-                        route_rows.append(
-                            {
-                                "origin_id": demand.origin_id,
-                                "destination_id": demand.destination_id,
-                                "flow": demand.flow,
-                                "edge_path": [],
-                                "cost": 0.0,
-                            }
-                        )
-                    elif demand.destination_id in paths:
-                        path, cost = paths[demand.destination_id]
-                        if path is not None:
-                            route_rows.append(
-                                {
-                                    "origin_id": demand.origin_id,
-                                    "destination_id": demand.destination_id,
-                                    "flow": demand.flow,
-                                    "edge_path": path,
-                                    "cost": cost,
-                                }
-                            )
-                        else:
-                            unassigned_rows.append(
-                                {
-                                    "origin_id": demand.origin_id,
-                                    "destination_id": demand.destination_id,
-                                    "flow": demand.flow,
-                                }
-                            )
-                    else:
-                        unassigned_rows.append(
-                            {
-                                "origin_id": demand.origin_id,
-                                "destination_id": demand.destination_id,
-                                "flow": demand.flow,
-                            }
-                        )
-
-            if not route_rows:
-                break
-
-            requested_by_edge = defaultdict(float)
-            for route in route_rows:
-                for edge_id in route["edge_path"]:
-                    requested_by_edge[edge_id] += route["flow"]
-
-            assigned_this_round = 0.0
-            round_allocations = []
-            for route in route_rows:
-                requested_flow = route["flow"]
-                assigned_flow = requested_flow
-                for edge_id in route["edge_path"]:
-                    requested_on_edge = requested_by_edge[edge_id]
-                    available = residual_capacity.get(edge_id, 0.0)
-                    if requested_on_edge > available + CAPACITY_EPSILON:
-                        assigned_flow = min(
-                            assigned_flow,
-                            requested_flow * available / requested_on_edge,
-                        )
-
-                if assigned_flow > CAPACITY_EPSILON:
-                    assigned_route = dict(route)
-                    assigned_route["flow"] = assigned_flow
-                    allocated_rows.append(assigned_route)
-                    round_allocations.append(assigned_route)
-                    assigned_this_round += assigned_flow
-
-                residual_flow = requested_flow - assigned_flow
-                if residual_flow > CAPACITY_EPSILON:
-                    next_pending.append(
-                        {
-                            "origin_id": route["origin_id"],
-                            "destination_id": route["destination_id"],
-                            "flow": residual_flow,
-                        }
-                    )
-
-            for route in round_allocations:
-                for edge_id in route["edge_path"]:
-                    residual_capacity[edge_id] -= route["flow"]
-                    if residual_capacity[edge_id] < CAPACITY_EPSILON:
-                        residual_capacity[edge_id] = 0.0
-
-            if assigned_this_round <= CAPACITY_EPSILON:
-                unassigned_rows.extend(next_pending)
-                break
-
-            pending = _frame_from_records(next_pending, FLOW_COLUMNS)
-
-        od_flows = ODFlows(_frame_from_records(allocated_rows, OD_FLOW_COLUMNS))
-        unassigned_od = OD(
-            _aggregate_od(_frame_from_records(unassigned_rows, FLOW_COLUMNS))
-        )
-        network_flows = NetworkFlows.from_network_and_od_flows(self, od_flows)
-        return AllocationResult(
-            od_flows=od_flows,
-            network_flows=network_flows,
-            unassigned_od=unassigned_od,
-        )
-
-    def _with_flows_removed_from_affected_paths(
-        self,
-        od_flows: ODFlows,
-        affected_flows: ODFlows,
-    ) -> pd.DataFrame:
-        network_data = self.to_dataframe()
-        current_flows = _flow_by_edge(od_flows)
-        affected_by_edge = _flow_by_edge(affected_flows)
-
-        if "flow" in network_data.columns:
-            base_flow = pd.to_numeric(network_data["flow"], errors="coerce").fillna(0)
-        else:
-            base_flow = network_data["edge_id"].map(current_flows).fillna(0)
-
-        network_data["flow"] = [
-            max(float(flow) - affected_by_edge.get(edge_id, 0.0), 0.0)
-            for edge_id, flow in zip(network_data["edge_id"], base_flow, strict=False)
-        ]
-        return _coerce_integral_numeric_columns(network_data)
 
 
 class ODFlows:
@@ -882,7 +573,7 @@ class NetworkFlows:
         gdf.to_file(path, layer=layer, **kwargs)
 
 
-def _normalize_rust_inputs(
+def _normalize(
     network_data: pd.DataFrame,
     flow_data: pd.DataFrame,
 ) -> (
@@ -950,7 +641,7 @@ def _unique_indexed_id_map(
     return value_to_id, id_to_value
 
 
-def _rust_od_flows_to_dataframe(
+def _od_flows_to_dataframe(
     data: pd.DataFrame,
     *,
     node_id_map: list[object],
@@ -967,7 +658,7 @@ def _rust_od_flows_to_dataframe(
     return _coerce_integral_numeric_columns(data)
 
 
-def _rust_od_to_dataframe(
+def _od_to_dataframe(
     data: pd.DataFrame,
     *,
     node_id_map: list[object],
@@ -980,7 +671,7 @@ def _rust_od_to_dataframe(
     return _coerce_integral_numeric_columns(data)
 
 
-def _rust_losses_to_dataframe(
+def _losses_to_dataframe(
     data: pd.DataFrame,
     *,
     node_id_map: list[object],
@@ -993,16 +684,16 @@ def _rust_losses_to_dataframe(
     return _coerce_integral_numeric_columns(data)
 
 
-def _network_flows_from_rust_result(
+def _network_flows_from_result(
     network_data: pd.DataFrame,
-    rust_network_flows: pd.DataFrame,
+    network_flows: pd.DataFrame,
     *,
     edge_value_to_id: dict[object, int],
 ) -> pd.DataFrame:
     flow_by_edge = dict(
         zip(
-            rust_network_flows["edge_id"].map(int),
-            rust_network_flows["flow"],
+            network_flows["edge_id"].map(int),
+            network_flows["flow"],
             strict=False,
         )
     )
@@ -1028,134 +719,3 @@ def _flow_by_edge(od_flows: ODFlows) -> dict[str, float]:
         for edge_id in row.edge_path:
             edge_flows[edge_id] += row.flow
     return dict(edge_flows)
-
-
-def _initial_residual_capacity(network_data: pd.DataFrame) -> dict[str, float]:
-    residual_capacity = {}
-    has_capacity = "capacity" in network_data.columns
-    has_flow = "flow" in network_data.columns
-
-    for row in network_data.itertuples(index=False):
-        edge_id = row.edge_id
-        capacity = getattr(row, "capacity") if has_capacity else inf
-        flow = getattr(row, "flow") if has_flow else 0
-        residual_capacity[edge_id] = max(float(capacity) - float(flow), 0.0)
-
-    return residual_capacity
-
-
-def _single_source_shortest_paths(
-    network_data: pd.DataFrame,
-    origin_id,
-    *,
-    directed: bool,
-    residual_capacity: dict[str, float] | None = None,
-) -> dict[int | str, tuple[list[str], float] | tuple[None, None]]:
-    """Compute shortest paths from origin_id to all reachable destinations.
-
-    Returns a dict mapping destination_id -> (edge_path, cost) or (None, None) if unreachable.
-    This is more efficient than computing individual shortest paths for each OD pair
-    when there are many destinations from the same origin.
-    """
-    adjacency = defaultdict(list)
-    has_cost = "cost" in network_data.columns
-    sequence = 0
-    for row in network_data.itertuples(index=False):
-        edge_id = row.edge_id
-        if (
-            residual_capacity is not None
-            and residual_capacity.get(edge_id, 0.0) <= CAPACITY_EPSILON
-        ):
-            continue
-        edge_cost = getattr(row, "cost") if has_cost else 1
-        adjacency[row.edge_from].append(
-            (row.edge_to, edge_id, float(edge_cost), sequence)
-        )
-        sequence += 1
-        if not directed:
-            adjacency[row.edge_to].append(
-                (row.edge_from, edge_id, float(edge_cost), sequence)
-            )
-            sequence += 1
-
-    # Run Dijkstra from origin_id to all destinations
-    heap = [(0.0, 0, origin_id, [])]
-    best_cost = {origin_id: 0.0}
-    visited_destinations = {}
-    counter = 1
-
-    while heap:
-        cost, _, node_id, edge_path = heappop(heap)
-        if node_id in visited_destinations:
-            continue
-        visited_destinations[node_id] = (edge_path, cost)
-        if cost > best_cost.get(node_id, inf) + CAPACITY_EPSILON:
-            continue
-        for next_node, edge_id, edge_cost, order in adjacency.get(node_id, []):
-            if next_node in visited_destinations:
-                continue
-            next_cost = cost + edge_cost
-            if next_cost + CAPACITY_EPSILON < best_cost.get(next_node, inf):
-                best_cost[next_node] = next_cost
-                heappush(
-                    heap,
-                    (next_cost, order + counter, next_node, edge_path + [edge_id]),
-                )
-                counter += 1
-
-    return visited_destinations
-
-
-def _shortest_path(
-    network_data: pd.DataFrame,
-    origin_id,
-    destination_id,
-    *,
-    directed: bool,
-    residual_capacity: dict[str, float] | None = None,
-) -> tuple[list[str], float] | tuple[None, None]:
-    if origin_id == destination_id:
-        return [], 0
-
-    adjacency = defaultdict(list)
-    has_cost = "cost" in network_data.columns
-    sequence = 0
-    for row in network_data.itertuples(index=False):
-        edge_id = row.edge_id
-        if (
-            residual_capacity is not None
-            and residual_capacity.get(edge_id, 0.0) <= CAPACITY_EPSILON
-        ):
-            continue
-        edge_cost = getattr(row, "cost") if has_cost else 1
-        adjacency[row.edge_from].append(
-            (row.edge_to, edge_id, float(edge_cost), sequence)
-        )
-        sequence += 1
-        if not directed:
-            adjacency[row.edge_to].append(
-                (row.edge_from, edge_id, float(edge_cost), sequence)
-            )
-            sequence += 1
-
-    heap = [(0.0, 0, origin_id, [])]
-    best_cost = {origin_id: 0.0}
-    counter = 1
-
-    while heap:
-        cost, _, node_id, edge_path = heappop(heap)
-        if node_id == destination_id:
-            return edge_path, cost
-        if cost > best_cost.get(node_id, inf) + CAPACITY_EPSILON:
-            continue
-        for next_node, edge_id, edge_cost, order in adjacency.get(node_id, []):
-            next_cost = cost + edge_cost
-            if next_cost + CAPACITY_EPSILON < best_cost.get(next_node, inf):
-                best_cost[next_node] = next_cost
-                heappush(
-                    heap,
-                    (next_cost, order + counter, next_node, edge_path + [edge_id]),
-                )
-                counter += 1
-
-    return None, None

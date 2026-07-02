@@ -35,7 +35,7 @@ version-file = "src/transport_flow_model/_version.py"
 include = ["/src"]
 
 [tool.maturin]
-module-name = "transport_flow_model._rust"
+module-name = "transport_flow_model._core"
 python-source = "src"
 manifest-path = "Cargo.toml"
 
@@ -58,9 +58,9 @@ prepare-benchmark-data = "python scripts/benchmark_preparation.py"
 profile-flow-allocation = "python scripts/profile_flow_scripts.py --script allocation"
 profile-flow-disruptions = "python scripts/profile_flow_scripts.py --script disruptions"
 profile-flow-scripts = "python scripts/profile_flow_scripts.py"
-rust-build = "maturin develop --manifest-path Cargo.toml"
-rust-test = "cargo test"
-rust-bench = "cargo bench"
+extension-build = "maturin develop --manifest-path Cargo.toml"
+extension-test = "cargo test"
+extension-bench = "cargo bench"
 lint = "ruff check"
 format = "ruff format"
 test = "python -m pytest tests"

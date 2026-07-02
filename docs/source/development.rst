@@ -238,21 +238,19 @@ outputs already exist and should be reused, pass ``--skip-setup-allocation``:
 
 ``profile_results/`` is ignored by Git.
 
-Experimental Rust extension
----------------------------
+Rust extension
+--------------
 
-The repository includes an experimental Rust scaffold for future high
-performance allocation and disruption algorithms. The current Python
-implementation remains the default runtime path. Build the native extension
-only when developing or benchmarking the Rust code:
+The package uses a Rust core. Build the native extension when developing or
+benchmarking the Rust code:
 
 .. code-block:: console
 
-   pixi run rust-build
+   pixi run extension-build
 
 This task runs ``maturin develop --manifest-path Cargo.toml`` and installs the
-PyO3 module as ``transport_flow_model._rust`` in the Pixi environment. The
-public helper module is ``transport_flow_model.rust``.
+PyO3 module as ``transport_flow_model._core`` in the Pixi environment. The
+public helper module is ``transport_flow_model.core``.
 
 The extension is structured in two layers:
 
@@ -262,21 +260,21 @@ The extension is structured in two layers:
 
 The Arrow IPC boundary keeps file I/O in the wrapper language. Python callers
 can pass ``pyarrow.Table``, ``pyarrow.RecordBatch``, or ``pandas.DataFrame`` to
-``transport_flow_model.rust.allocate_arrow`` and
-``transport_flow_model.rust.disrupt_arrow``. Other language wrappers can target
+``transport_flow_model.core.allocate_arrow`` and
+``transport_flow_model.core.disrupt_arrow``. Other language wrappers can target
 the same Arrow stream schemas without depending on Python data-frame internals.
 
-Run Rust unit tests with:
+Run unit tests with:
 
 .. code-block:: console
 
-   pixi run rust-test
+   pixi run extension-test
 
-Run Rust microbenchmarks with:
+Run microbenchmarks with:
 
 .. code-block:: console
 
-   pixi run rust-bench
+   pixi run extension-bench
 
 The scaffold intentionally avoids extra graph/routing crates for now. Add new
 Rust dependencies only when they replace substantial local complexity or are
@@ -314,9 +312,9 @@ The current Pixi tasks are:
      - Write a flamegraph for allocation only.
    * - ``pixi run profile-flow-disruptions``
      - Write a flamegraph for disruption only.
-   * - ``pixi run rust-build``
-     - Build and install the experimental PyO3 Rust extension.
-   * - ``pixi run rust-test``
-     - Run Rust unit tests for the native algorithm scaffold.
-   * - ``pixi run rust-bench``
-     - Run Criterion benchmarks for the native algorithm scaffold.
+   * - ``pixi run extension-build``
+     - Build and install the PyO3 Rust extension.
+   * - ``pixi run extension-test``
+     - Run unit tests for the extension.
+   * - ``pixi run extension-bench``
+     - Run Criterion benchmarks for the extension.

@@ -952,7 +952,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "transport-flow-model-rust"
+name = "transport-flow-model"
 version = "0.1.0"
 dependencies = [
  "arrow",

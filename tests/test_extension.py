@@ -1,15 +1,14 @@
 import pandas as pd
 import pytest
 
-from transport_flow_model import rust
+from transport_flow_model import core
 
 
-def test_rust_extension_availability_probe_returns_bool():
-    assert isinstance(rust.is_available(), bool)
+def test_extension_availability_probe_returns_bool():
+    assert isinstance(core.is_available(), bool)
 
 
-@pytest.mark.skipif(not rust.is_available(), reason="Rust extension is not built")
-def test_rust_allocate_arrow_smoke():
+def test_extension_allocate():
     network = pd.DataFrame(
         {
             "edge_from": [0, 0, 2],
@@ -27,7 +26,7 @@ def test_rust_allocate_arrow_smoke():
         }
     )
 
-    result = rust.allocate_arrow(network, od, directed=True)
+    result = core.allocate(network, od, directed=True)
     od_flows = result["od_flows"].to_pandas()
     network_flows = result["network_flows"].to_pandas()
 
@@ -36,8 +35,7 @@ def test_rust_allocate_arrow_smoke():
     assert network_flows.set_index("edge_id").loc[1, "flow"] == 7.0
 
 
-@pytest.mark.skipif(not rust.is_available(), reason="Rust extension is not built")
-def test_rust_disrupt_arrow_smoke():
+def test_extension_disrupt():
     network = pd.DataFrame(
         {
             "edge_from": [0, 1, 0],
@@ -57,7 +55,7 @@ def test_rust_disrupt_arrow_smoke():
         }
     )
 
-    result = rust.disrupt_arrow(network, od_flows, [0], directed=True)
+    result = core.disrupt(network, od_flows, [0], directed=True)
     rerouted_flows = result["rerouted_flows"].to_pandas()
     losses = result["losses"].to_pandas()
 

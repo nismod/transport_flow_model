@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use _rust::core::{allocate, disrupt, shortest_path, Demand, Edge, OdFlow};
+use _core::core::{allocate, disrupt, shortest_path, Demand, Edge, OdFlow};
 
 fn edge(from: usize, to: usize, id: usize, cost: f64, capacity: Option<f64>) -> Edge {
     Edge {
