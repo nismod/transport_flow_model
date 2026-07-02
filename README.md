@@ -46,6 +46,9 @@ Useful Pixi commands:
 | `pixi run profile-flow-scripts`     | Write CPU/time flamegraphs for allocation and disruption.                       |
 | `pixi run profile-flow-allocation`  | Write a flamegraph for `flow_allocation.py`.                                    |
 | `pixi run profile-flow-disruptions` | Write a flamegraph for `flow_disruptions.py`.                                   |
+| `pixi run rust-build`               | Build and install the experimental PyO3 Rust extension in the Pixi environment. |
+| `pixi run rust-test`                | Run Rust unit tests for the native algorithm scaffold.                          |
+| `pixi run rust-bench`               | Run Criterion benchmarks for the native algorithm scaffold.                     |
 
 To add a new package dependency, make sure to use `--pypi` to include it
 in the `pyproject.toml` `dependencies` table:

@@ -145,3 +145,8 @@ FluxNet Neural PDE Framework
 - Exact discrete conservation using modular capacity-constrained transport
   heads.
 - https://arxiv.org/html/2602.01941
+
+Dataset of traffic networks and assignment for 20 cities
+
+- https://doi.org/10.6084/m9.figshare.24235696
+- could use for performance benchmarking and validation/comparison of assignment methods

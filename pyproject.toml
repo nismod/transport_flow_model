@@ -16,7 +16,8 @@ dev = [
     "pytest-cov",
     "ruff>=0.15.14,<0.16",
     "osmnx>=2.0.0,<3",
-    "py-spy>=0.4.2,<0.5"
+    "py-spy>=0.4.2,<0.5",
+    "maturin>=1.9,<2"
 ]
 doc = ["sphinx", "pydata-sphinx-theme"]
 
@@ -32,6 +33,11 @@ version-file = "src/transport_flow_model/_version.py"
 
 [tool.hatch.build.targets.sdist]
 include = ["/src"]
+
+[tool.maturin]
+module-name = "transport_flow_model._rust"
+python-source = "src"
+manifest-path = "Cargo.toml"
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
@@ -52,6 +58,9 @@ prepare-benchmark-data = "python scripts/benchmark_preparation.py"
 profile-flow-allocation = "python scripts/profile_flow_scripts.py --script allocation"
 profile-flow-disruptions = "python scripts/profile_flow_scripts.py --script disruptions"
 profile-flow-scripts = "python scripts/profile_flow_scripts.py"
+rust-build = "maturin develop --manifest-path Cargo.toml"
+rust-test = "cargo test"
+rust-bench = "cargo bench"
 lint = "ruff check"
 format = "ruff format"
 test = "python -m pytest tests"
