@@ -47,11 +47,6 @@ def _coerce_integral_numeric_columns(data: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-def _frame_from_records(records: list[dict], columns: tuple[str, ...]) -> pd.DataFrame:
-    data = pd.DataFrame.from_records(records, columns=list(columns))
-    return _coerce_integral_numeric_columns(data)
-
-
 def _dataframe_delegate(instance, name):
     data = instance.__dict__.get("_data")
     if data is not None and hasattr(data, name):
@@ -345,35 +340,7 @@ class Network:
         directed: bool = True,
     ) -> AllocationResult:
         """Allocate OD flows to least-cost paths on this network."""
-        return self._allocate(
-            od,
-            capacity_constrained=capacity_constrained,
-            directed=directed,
-        )
 
-    def disrupt(
-        self,
-        od_flows: ODFlows,
-        failed_edges: list[str],
-        *,
-        capacity_constrained: bool = True,
-        directed: bool = True,
-    ) -> DisruptionResult:
-        """Reroute flows whose existing paths include any failed edge."""
-        return self._disrupt(
-            od_flows,
-            failed_edges,
-            capacity_constrained=capacity_constrained,
-            directed=directed,
-        )
-
-    def _allocate(
-        self,
-        od: OD,
-        *,
-        capacity_constrained: bool,
-        directed: bool,
-    ) -> AllocationResult:
         network_data = self.to_dataframe()
         od_data = od.to_dataframe()
         normalized = _normalize(network_data, od_data)
@@ -408,15 +375,15 @@ class Network:
             unassigned_od=OD(unassigned_od),
         )
 
-    def _disrupt(
+    def disrupt(
         self,
         od_flows: ODFlows,
         failed_edges: list[str],
         *,
-        capacity_constrained: bool,
-        directed: bool,
+        capacity_constrained: bool = True,
+        directed: bool = True,
     ) -> DisruptionResult:
-
+        """Reroute flows whose existing paths include any failed edge."""
         network_data = self.to_dataframe()
         od_flow_data = od_flows.to_dataframe()
         normalized = _normalize(network_data, od_flow_data)
@@ -702,15 +669,6 @@ def _network_flows_from_result(
         lambda edge_id: flow_by_edge.get(edge_value_to_id[edge_id], 0)
     )
     return _coerce_integral_numeric_columns(data)
-
-
-def _aggregate_od(data: pd.DataFrame) -> pd.DataFrame:
-    if data.empty:
-        return pd.DataFrame(columns=list(FLOW_COLUMNS))
-    aggregated = data.groupby(["origin_id", "destination_id"], as_index=False)[
-        "flow"
-    ].sum()
-    return _coerce_integral_numeric_columns(aggregated)
 
 
 def _flow_by_edge(od_flows: ODFlows) -> dict[str, float]:
