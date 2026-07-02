@@ -2,8 +2,8 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, Float32Array, Float64Array, Int32Array, Int64Array, LargeListArray,
-    LargeStringArray, ListArray, ListBuilder, StringArray, StringBuilder, UInt32Array, UInt64Array,
+    Array, ArrayRef, Float32Array, Float64Array, Int32Array, Int64Array, LargeListArray, ListArray,
+    ListBuilder, UInt32Array, UInt64Array, UInt64Builder,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::reader::StreamReader;
@@ -20,9 +20,9 @@ pub fn read_network_ipc(bytes: &[u8]) -> Result<Vec<Edge>, String> {
         let id = required_column(&batch, "edge_id")?;
         for row in 0..batch.num_rows() {
             edges.push(Edge {
-                from: string_value(from.as_ref(), "edge_from", row)?,
-                to: string_value(to.as_ref(), "edge_to", row)?,
-                id: string_value(id.as_ref(), "edge_id", row)?,
+                from: integer_value(from.as_ref(), "edge_from", row)?,
+                to: integer_value(to.as_ref(), "edge_to", row)?,
+                id: integer_value(id.as_ref(), "edge_id", row)?,
                 cost: numeric_value_or_default(&batch, "cost", row, 1.0)?,
                 capacity: optional_numeric_value(&batch, "capacity", row)?,
                 flow: numeric_value_or_default(&batch, "flow", row, 0.0)?,
@@ -39,8 +39,8 @@ pub fn read_demands_ipc(bytes: &[u8]) -> Result<Vec<Demand>, String> {
         let destinations = required_column(&batch, "destination_id")?;
         for row in 0..batch.num_rows() {
             demands.push(Demand {
-                origin: string_value(origins.as_ref(), "origin_id", row)?,
-                destination: string_value(destinations.as_ref(), "destination_id", row)?,
+                origin: integer_value(origins.as_ref(), "origin_id", row)?,
+                destination: integer_value(destinations.as_ref(), "destination_id", row)?,
                 flow: required_numeric_value(&batch, "flow", row)?,
             });
         }
@@ -58,8 +58,8 @@ pub fn read_od_flows_ipc(bytes: &[u8]) -> Result<Vec<OdFlow>, String> {
             .ok_or_else(|| "missing required column edge_path".to_string())?;
         for row in 0..batch.num_rows() {
             od_flows.push(OdFlow {
-                origin: string_value(origins.as_ref(), "origin_id", row)?,
-                destination: string_value(destinations.as_ref(), "destination_id", row)?,
+                origin: integer_value(origins.as_ref(), "origin_id", row)?,
+                destination: integer_value(destinations.as_ref(), "destination_id", row)?,
                 flow: required_numeric_value(&batch, "flow", row)?,
                 edge_path: edge_path_value(edge_paths.as_ref(), row)?,
                 cost: required_numeric_value(&batch, "cost", row)?,
@@ -108,21 +108,21 @@ fn write_batch(batch: RecordBatch) -> Result<Vec<u8>, String> {
 }
 
 fn od_flows_to_ipc(rows: &[OdFlow]) -> Result<Vec<u8>, String> {
-    let mut path_builder = ListBuilder::new(StringBuilder::new());
+    let mut path_builder = ListBuilder::new(UInt64Builder::new());
     for row in rows {
         for edge_id in &row.edge_path {
-            path_builder.values().append_value(edge_id);
+            path_builder.values().append_value(*edge_id as u64);
         }
         path_builder.append(true);
     }
 
     let schema = Arc::new(Schema::new(vec![
-        Field::new("origin_id", DataType::Utf8, false),
-        Field::new("destination_id", DataType::Utf8, false),
+        Field::new("origin_id", DataType::UInt64, false),
+        Field::new("destination_id", DataType::UInt64, false),
         Field::new("flow", DataType::Float64, false),
         Field::new(
             "edge_path",
-            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            DataType::List(Arc::new(Field::new("item", DataType::UInt64, true))),
             false,
         ),
         Field::new("cost", DataType::Float64, false),
@@ -130,8 +130,8 @@ fn od_flows_to_ipc(rows: &[OdFlow]) -> Result<Vec<u8>, String> {
     let batch = RecordBatch::try_new(
         schema,
         vec![
-            string_array(rows.iter().map(|row| row.origin.as_str())),
-            string_array(rows.iter().map(|row| row.destination.as_str())),
+            integer_array(rows.iter().map(|row| row.origin)),
+            integer_array(rows.iter().map(|row| row.destination)),
             float_array(rows.iter().map(|row| row.flow)),
             Arc::new(path_builder.finish()) as ArrayRef,
             float_array(rows.iter().map(|row| row.cost)),
@@ -143,9 +143,9 @@ fn od_flows_to_ipc(rows: &[OdFlow]) -> Result<Vec<u8>, String> {
 
 fn network_flows_to_ipc(rows: &[EdgeFlow]) -> Result<Vec<u8>, String> {
     let schema = Arc::new(Schema::new(vec![
-        Field::new("edge_id", DataType::Utf8, false),
-        Field::new("edge_from", DataType::Utf8, false),
-        Field::new("edge_to", DataType::Utf8, false),
+        Field::new("edge_id", DataType::UInt64, false),
+        Field::new("edge_from", DataType::UInt64, false),
+        Field::new("edge_to", DataType::UInt64, false),
         Field::new("cost", DataType::Float64, false),
         Field::new("capacity", DataType::Float64, true),
         Field::new("flow", DataType::Float64, false),
@@ -153,9 +153,9 @@ fn network_flows_to_ipc(rows: &[EdgeFlow]) -> Result<Vec<u8>, String> {
     let batch = RecordBatch::try_new(
         schema,
         vec![
-            string_array(rows.iter().map(|row| row.edge_id.as_str())),
-            string_array(rows.iter().map(|row| row.edge_from.as_str())),
-            string_array(rows.iter().map(|row| row.edge_to.as_str())),
+            integer_array(rows.iter().map(|row| row.edge_id)),
+            integer_array(rows.iter().map(|row| row.edge_from)),
+            integer_array(rows.iter().map(|row| row.edge_to)),
             float_array(rows.iter().map(|row| row.cost)),
             Arc::new(Float64Array::from(
                 rows.iter().map(|row| row.capacity).collect::<Vec<_>>(),
@@ -169,15 +169,15 @@ fn network_flows_to_ipc(rows: &[EdgeFlow]) -> Result<Vec<u8>, String> {
 
 fn demands_to_ipc(rows: &[Demand]) -> Result<Vec<u8>, String> {
     let schema = Arc::new(Schema::new(vec![
-        Field::new("origin_id", DataType::Utf8, false),
-        Field::new("destination_id", DataType::Utf8, false),
+        Field::new("origin_id", DataType::UInt64, false),
+        Field::new("destination_id", DataType::UInt64, false),
         Field::new("flow", DataType::Float64, false),
     ]));
     let batch = RecordBatch::try_new(
         schema,
         vec![
-            string_array(rows.iter().map(|row| row.origin.as_str())),
-            string_array(rows.iter().map(|row| row.destination.as_str())),
+            integer_array(rows.iter().map(|row| row.origin)),
+            integer_array(rows.iter().map(|row| row.destination)),
             float_array(rows.iter().map(|row| row.flow)),
         ],
     )
@@ -187,8 +187,8 @@ fn demands_to_ipc(rows: &[Demand]) -> Result<Vec<u8>, String> {
 
 fn losses_to_ipc(rows: &[Loss]) -> Result<Vec<u8>, String> {
     let schema = Arc::new(Schema::new(vec![
-        Field::new("origin_id", DataType::Utf8, false),
-        Field::new("destination_id", DataType::Utf8, false),
+        Field::new("origin_id", DataType::UInt64, false),
+        Field::new("destination_id", DataType::UInt64, false),
         Field::new("flow", DataType::Float64, false),
         Field::new("initial_cost", DataType::Float64, false),
         Field::new("disrupted_cost", DataType::Float64, false),
@@ -197,8 +197,8 @@ fn losses_to_ipc(rows: &[Loss]) -> Result<Vec<u8>, String> {
     let batch = RecordBatch::try_new(
         schema,
         vec![
-            string_array(rows.iter().map(|row| row.origin.as_str())),
-            string_array(rows.iter().map(|row| row.destination.as_str())),
+            integer_array(rows.iter().map(|row| row.origin)),
+            integer_array(rows.iter().map(|row| row.destination)),
             float_array(rows.iter().map(|row| row.flow)),
             float_array(rows.iter().map(|row| row.initial_cost)),
             float_array(rows.iter().map(|row| row.disrupted_cost)),
@@ -215,16 +215,20 @@ fn required_column<'a>(batch: &'a RecordBatch, name: &str) -> Result<&'a ArrayRe
         .ok_or_else(|| format!("missing required column {name}"))
 }
 
-fn string_value(array: &dyn Array, name: &str, row: usize) -> Result<String, String> {
+fn integer_value(array: &dyn Array, name: &str, row: usize) -> Result<usize, String> {
     if array.is_null(row) {
         return Err(format!("column {name} cannot contain null values"));
     }
-    if let Some(array) = array.as_any().downcast_ref::<StringArray>() {
-        Ok(array.value(row).to_string())
-    } else if let Some(array) = array.as_any().downcast_ref::<LargeStringArray>() {
-        Ok(array.value(row).to_string())
+    if let Some(array) = array.as_any().downcast_ref::<UInt64Array>() {
+        usize::try_from(array.value(row)).map_err(|_| format!("column {name} exceeds usize"))
+    } else if let Some(array) = array.as_any().downcast_ref::<UInt32Array>() {
+        Ok(array.value(row) as usize)
+    } else if let Some(array) = array.as_any().downcast_ref::<Int64Array>() {
+        usize::try_from(array.value(row)).map_err(|_| format!("column {name} must be non-negative"))
+    } else if let Some(array) = array.as_any().downcast_ref::<Int32Array>() {
+        usize::try_from(array.value(row)).map_err(|_| format!("column {name} must be non-negative"))
     } else {
-        Err(format!("column {name} must be utf8 or large_utf8"))
+        Err(format!("column {name} must be an integer id"))
     }
 }
 
@@ -282,7 +286,7 @@ fn numeric_value(array: &dyn Array, name: &str, row: usize) -> Result<f64, Strin
     }
 }
 
-fn edge_path_value(array: &dyn Array, row: usize) -> Result<Vec<String>, String> {
+fn edge_path_value(array: &dyn Array, row: usize) -> Result<Vec<usize>, String> {
     if let Some(paths) = array.as_any().downcast_ref::<ListArray>() {
         let values = paths.value(row);
         return edge_path_values(values.as_ref());
@@ -293,45 +297,48 @@ fn edge_path_value(array: &dyn Array, row: usize) -> Result<Vec<String>, String>
         return edge_path_values(values.as_ref());
     }
 
-    if let Some(paths) = array.as_any().downcast_ref::<StringArray>() {
-        return Ok(paths
-            .value(row)
-            .split(',')
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .collect());
-    }
-
-    if let Some(paths) = array.as_any().downcast_ref::<LargeStringArray>() {
-        return Ok(paths
-            .value(row)
-            .split(',')
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .collect());
-    }
-
-    Err("edge_path must be list<utf8>, list<large_utf8>, or comma-separated utf8".to_string())
+    Err("edge_path must be list<uint64> or another integer list".to_string())
 }
 
-fn edge_path_values(values: &dyn Array) -> Result<Vec<String>, String> {
-    if let Some(values) = values.as_any().downcast_ref::<StringArray>() {
+fn edge_path_values(values: &dyn Array) -> Result<Vec<usize>, String> {
+    if let Some(values) = values.as_any().downcast_ref::<UInt64Array>() {
         return Ok((0..values.len())
-            .map(|index| values.value(index).to_string())
+            .map(|index| {
+                usize::try_from(values.value(index))
+                    .map_err(|_| "edge_path value exceeds usize".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?);
+    }
+    if let Some(values) = values.as_any().downcast_ref::<UInt32Array>() {
+        return Ok((0..values.len())
+            .map(|index| values.value(index) as usize)
             .collect());
     }
-    if let Some(values) = values.as_any().downcast_ref::<LargeStringArray>() {
-        return Ok((0..values.len())
-            .map(|index| values.value(index).to_string())
-            .collect());
+    if let Some(values) = values.as_any().downcast_ref::<Int64Array>() {
+        return (0..values.len())
+            .map(|index| {
+                usize::try_from(values.value(index))
+                    .map_err(|_| "edge_path values must be non-negative".to_string())
+            })
+            .collect();
     }
-    Err("edge_path list values must be utf8 or large_utf8".to_string())
-}
-
-fn string_array<'a>(values: impl Iterator<Item = &'a str>) -> ArrayRef {
-    Arc::new(StringArray::from(values.collect::<Vec<_>>())) as ArrayRef
+    if let Some(values) = values.as_any().downcast_ref::<Int32Array>() {
+        return (0..values.len())
+            .map(|index| {
+                usize::try_from(values.value(index))
+                    .map_err(|_| "edge_path values must be non-negative".to_string())
+            })
+            .collect();
+    }
+    Err("edge_path list values must be integer ids".to_string())
 }
 
 fn float_array(values: impl Iterator<Item = f64>) -> ArrayRef {
     Arc::new(Float64Array::from(values.collect::<Vec<_>>())) as ArrayRef
+}
+
+fn integer_array(values: impl Iterator<Item = usize>) -> ArrayRef {
+    Arc::new(UInt64Array::from(
+        values.map(|value| value as u64).collect::<Vec<_>>(),
+    )) as ArrayRef
 }

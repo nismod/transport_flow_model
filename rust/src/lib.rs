@@ -36,7 +36,7 @@ fn disrupt_ipc<'py>(
     py: Python<'py>,
     network_ipc: &[u8],
     od_flows_ipc: &[u8],
-    failed_edges: Vec<String>,
+    failed_edges: Vec<usize>,
     capacity_constrained: bool,
     directed: bool,
 ) -> PyResult<Bound<'py, PyDict>> {

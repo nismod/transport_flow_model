@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from heapq import heappop, heappush
+from importlib import import_module
 from math import inf, isfinite
+from os import environ
 from pathlib import Path
 
 import geopandas as gpd
@@ -22,6 +24,8 @@ LOSS_COLUMNS = (
     "rerouting_loss",
 )
 CAPACITY_EPSILON = 1.0e-9
+_RUST_BACKEND = None
+_RUST_BACKEND_LOADED = False
 
 
 def _coerce_integral_numeric_columns(data: pd.DataFrame) -> pd.DataFrame:
@@ -58,6 +62,26 @@ def _dataframe_delegate(instance, name):
     raise AttributeError(
         f"{instance.__class__.__name__!r} object has no attribute {name!r}"
     )
+
+
+def _get_rust_backend():
+    """Return the optional Rust helper module when the native extension is built."""
+    global _RUST_BACKEND, _RUST_BACKEND_LOADED
+    if environ.get("TRANSPORT_FLOW_MODEL_USE_RUST", "1").lower() in {
+        "0",
+        "false",
+        "no",
+    }:
+        return None
+    if not _RUST_BACKEND_LOADED:
+        _RUST_BACKEND_LOADED = True
+        try:
+            rust_backend = import_module("transport_flow_model.rust")
+        except ImportError:
+            rust_backend = None
+        if rust_backend is not None and rust_backend.is_available():
+            _RUST_BACKEND = rust_backend
+    return _RUST_BACKEND
 
 
 @dataclass
@@ -344,6 +368,13 @@ class Network:
         directed: bool = True,
     ) -> AllocationResult:
         """Allocate OD flows to least-cost paths on this network."""
+        rust_result = self._allocate_rust(
+            od,
+            capacity_constrained=capacity_constrained,
+            directed=directed,
+        )
+        if rust_result is not None:
+            return rust_result
         if capacity_constrained:
             return self._allocate_capacity_constrained(od, directed=directed)
         return self._allocate_unconstrained(od, directed=directed)
@@ -357,6 +388,15 @@ class Network:
         directed: bool = True,
     ) -> DisruptionResult:
         """Reroute flows whose existing paths include any failed edge."""
+        rust_result = self._disrupt_rust(
+            od_flows,
+            failed_edges,
+            capacity_constrained=capacity_constrained,
+            directed=directed,
+        )
+        if rust_result is not None:
+            return rust_result
+
         failed_edge_set = set(failed_edges)
         flow_data = od_flows.to_dataframe()
         affected_mask = flow_data["edge_path"].map(
@@ -411,6 +451,114 @@ class Network:
             network_flows=network_flows,
             isolated_od=allocation.unassigned_od,
             losses=losses,
+        )
+
+    def _allocate_rust(
+        self,
+        od: OD,
+        *,
+        capacity_constrained: bool,
+        directed: bool,
+    ) -> AllocationResult | None:
+        rust_backend = _get_rust_backend()
+        if rust_backend is None:
+            return None
+
+        network_data = self.to_dataframe()
+        od_data = od.to_dataframe()
+        normalized = _normalize_rust_inputs(network_data, od_data)
+        if normalized is None:
+            return None
+        network_input, od_input, node_id_map, edge_id_map, edge_value_to_id = normalized
+
+        result = rust_backend.allocate_arrow(
+            network_input,
+            od_input,
+            capacity_constrained=capacity_constrained,
+            directed=directed,
+        )
+        od_flows = _rust_od_flows_to_dataframe(
+            result["od_flows"].to_pandas(),
+            node_id_map=node_id_map,
+            edge_id_map=edge_id_map,
+        )
+        unassigned_od = _rust_od_to_dataframe(
+            result["unassigned_od"].to_pandas(),
+            node_id_map=node_id_map,
+        )
+        network_flows = _network_flows_from_rust_result(
+            network_data,
+            result["network_flows"].to_pandas(),
+            edge_value_to_id=edge_value_to_id,
+        )
+
+        return AllocationResult(
+            od_flows=ODFlows(od_flows),
+            network_flows=NetworkFlows(network_flows),
+            unassigned_od=OD(unassigned_od),
+        )
+
+    def _disrupt_rust(
+        self,
+        od_flows: ODFlows,
+        failed_edges: list[str],
+        *,
+        capacity_constrained: bool,
+        directed: bool,
+    ) -> DisruptionResult | None:
+        rust_backend = _get_rust_backend()
+        if rust_backend is None:
+            return None
+
+        network_data = self.to_dataframe()
+        od_flow_data = od_flows.to_dataframe()
+        normalized = _normalize_rust_inputs(network_data, od_flow_data)
+        if normalized is None:
+            return None
+        network_input, od_flows_input, node_id_map, edge_id_map, edge_value_to_id = normalized
+        try:
+            od_flows_input["edge_path"] = od_flows_input["edge_path"].map(
+                lambda path: [edge_value_to_id[edge_id] for edge_id in path]
+            )
+            failed_edge_ids = [
+                edge_value_to_id[edge_id]
+                for edge_id in failed_edges
+                if edge_id in edge_value_to_id
+            ]
+        except TypeError:
+            return None
+
+        result = rust_backend.disrupt_arrow(
+            network_input,
+            od_flows_input,
+            failed_edge_ids,
+            capacity_constrained=capacity_constrained,
+            directed=directed,
+        )
+        rerouted_flows = _rust_od_flows_to_dataframe(
+            result["rerouted_flows"].to_pandas(),
+            node_id_map=node_id_map,
+            edge_id_map=edge_id_map,
+        )
+        isolated_od = _rust_od_to_dataframe(
+            result["isolated_od"].to_pandas(),
+            node_id_map=node_id_map,
+        )
+        losses = _rust_losses_to_dataframe(
+            result["losses"].to_pandas(),
+            node_id_map=node_id_map,
+        )
+        network_flows = _network_flows_from_rust_result(
+            network_data,
+            result["network_flows"].to_pandas(),
+            edge_value_to_id=edge_value_to_id,
+        )
+
+        return DisruptionResult(
+            rerouted_flows=ODFlows(rerouted_flows),
+            network_flows=NetworkFlows(network_flows),
+            isolated_od=OD(isolated_od),
+            losses=OD(losses),
         )
 
     def _allocate_unconstrained(self, od: OD, *, directed: bool) -> AllocationResult:
@@ -676,6 +824,137 @@ class NetworkFlows:
         """Write network flows to a file using geopandas (GeoJSON, Shapefile, etc.)."""
         gdf = gpd.GeoDataFrame(self._data)
         gdf.to_file(path, layer=layer, **kwargs)
+
+
+def _normalize_rust_inputs(
+    network_data: pd.DataFrame,
+    flow_data: pd.DataFrame,
+) -> (
+    tuple[
+        pd.DataFrame,
+        pd.DataFrame,
+        list[object],
+        list[object],
+        dict[object, int],
+    ]
+    | None
+):
+    node_value_to_id, node_id_map = _indexed_id_map(
+        network_data["edge_from"],
+        network_data["edge_to"],
+        flow_data["origin_id"],
+        flow_data["destination_id"],
+    )
+    edge_value_to_id, edge_id_map = _unique_indexed_id_map(network_data["edge_id"])
+    if node_value_to_id is None or edge_value_to_id is None:
+        return None
+
+    network_input = network_data.copy()
+    network_input["edge_from"] = network_input["edge_from"].map(node_value_to_id)
+    network_input["edge_to"] = network_input["edge_to"].map(node_value_to_id)
+    network_input["edge_id"] = network_input["edge_id"].map(edge_value_to_id)
+
+    flow_input = flow_data.copy()
+    flow_input["origin_id"] = flow_input["origin_id"].map(node_value_to_id)
+    flow_input["destination_id"] = flow_input["destination_id"].map(node_value_to_id)
+
+    return network_input, flow_input, node_id_map, edge_id_map, edge_value_to_id
+
+
+def _indexed_id_map(
+    *columns: pd.Series,
+) -> tuple[dict[object, int] | None, list[object] | None]:
+    value_to_id = {}
+    id_to_value = []
+    for column in columns:
+        for value in column:
+            try:
+                if value in value_to_id:
+                    continue
+                value_to_id[value] = len(id_to_value)
+            except TypeError:
+                return None, None
+            id_to_value.append(value)
+    return value_to_id, id_to_value
+
+
+def _unique_indexed_id_map(
+    column: pd.Series,
+) -> tuple[dict[object, int] | None, list[object] | None]:
+    value_to_id = {}
+    id_to_value = []
+    for value in column:
+        try:
+            if value in value_to_id:
+                return None, None
+            value_to_id[value] = len(id_to_value)
+        except TypeError:
+            return None, None
+        id_to_value.append(value)
+    return value_to_id, id_to_value
+
+
+def _rust_od_flows_to_dataframe(
+    data: pd.DataFrame,
+    *,
+    node_id_map: list[object],
+    edge_id_map: list[object],
+) -> pd.DataFrame:
+    data = data.loc[:, list(OD_FLOW_COLUMNS)].copy()
+    data["origin_id"] = data["origin_id"].map(lambda value: node_id_map[int(value)])
+    data["destination_id"] = data["destination_id"].map(
+        lambda value: node_id_map[int(value)]
+    )
+    data["edge_path"] = data["edge_path"].map(
+        lambda path: [edge_id_map[int(edge_id)] for edge_id in path]
+    )
+    return _coerce_integral_numeric_columns(data)
+
+
+def _rust_od_to_dataframe(
+    data: pd.DataFrame,
+    *,
+    node_id_map: list[object],
+) -> pd.DataFrame:
+    data = data.loc[:, list(FLOW_COLUMNS)].copy()
+    data["origin_id"] = data["origin_id"].map(lambda value: node_id_map[int(value)])
+    data["destination_id"] = data["destination_id"].map(
+        lambda value: node_id_map[int(value)]
+    )
+    return _coerce_integral_numeric_columns(data)
+
+
+def _rust_losses_to_dataframe(
+    data: pd.DataFrame,
+    *,
+    node_id_map: list[object],
+) -> pd.DataFrame:
+    data = data.loc[:, list(LOSS_COLUMNS)].copy()
+    data["origin_id"] = data["origin_id"].map(lambda value: node_id_map[int(value)])
+    data["destination_id"] = data["destination_id"].map(
+        lambda value: node_id_map[int(value)]
+    )
+    return _coerce_integral_numeric_columns(data)
+
+
+def _network_flows_from_rust_result(
+    network_data: pd.DataFrame,
+    rust_network_flows: pd.DataFrame,
+    *,
+    edge_value_to_id: dict[object, int],
+) -> pd.DataFrame:
+    flow_by_edge = dict(
+        zip(
+            rust_network_flows["edge_id"].map(int),
+            rust_network_flows["flow"],
+            strict=False,
+        )
+    )
+    data = network_data.copy()
+    data["flow"] = data["edge_id"].map(
+        lambda edge_id: flow_by_edge.get(edge_value_to_id[edge_id], 0)
+    )
+    return _coerce_integral_numeric_columns(data)
 
 
 def _aggregate_od(data: pd.DataFrame) -> pd.DataFrame:

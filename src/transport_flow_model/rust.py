@@ -45,7 +45,7 @@ def allocate_arrow(
 def disrupt_arrow(
     network: pa.Table | pa.RecordBatch | pd.DataFrame,
     od_flows: pa.Table | pa.RecordBatch | pd.DataFrame,
-    failed_edges: list[str],
+    failed_edges: list[int],
     *,
     capacity_constrained: bool = True,
     directed: bool = True,

@@ -5,11 +5,11 @@ use criterion::{criterion_group, criterion_main, Criterion};
 
 use _rust::core::{allocate, disrupt, shortest_path, Demand, Edge, OdFlow};
 
-fn edge(from: &str, to: &str, id: &str, cost: f64, capacity: Option<f64>) -> Edge {
+fn edge(from: usize, to: usize, id: usize, cost: f64, capacity: Option<f64>) -> Edge {
     Edge {
-        from: from.to_string(),
-        to: to.to_string(),
-        id: id.to_string(),
+        from,
+        to,
+        id,
         cost,
         capacity,
         flow: 0.0,
@@ -19,28 +19,19 @@ fn edge(from: &str, to: &str, id: &str, cost: f64, capacity: Option<f64>) -> Edg
 fn synthetic_network(size: usize) -> Vec<Edge> {
     let mut edges = Vec::new();
     for index in 0..size {
-        let from = format!("N{index}");
-        let to = format!("N{}", index + 1);
-        edges.push(edge(&from, &to, &format!("E{index}"), 1.0, Some(1_000.0)));
+        edges.push(edge(index, index + 1, edges.len(), 1.0, Some(1_000.0)));
         if index + 2 <= size {
-            let skip_to = format!("N{}", index + 2);
-            edges.push(edge(
-                &from,
-                &skip_to,
-                &format!("S{index}"),
-                3.0,
-                Some(1_000.0),
-            ));
+            edges.push(edge(index, index + 2, edges.len(), 3.0, Some(1_000.0)));
         }
     }
     edges
 }
 
-fn repeated_demands(count: usize, destination: &str) -> Vec<Demand> {
+fn repeated_demands(count: usize, destination: usize) -> Vec<Demand> {
     (0..count)
         .map(|index| Demand {
-            origin: format!("N{}", index % 10),
-            destination: destination.to_string(),
+            origin: index % 10,
+            destination,
             flow: 10.0,
         })
         .collect()
@@ -49,21 +40,13 @@ fn repeated_demands(count: usize, destination: &str) -> Vec<Demand> {
 fn bench_shortest_path(c: &mut Criterion) {
     let edges = synthetic_network(250);
     c.bench_function("shortest_path_250_edges", |b| {
-        b.iter(|| {
-            shortest_path(
-                black_box(&edges),
-                black_box("N0"),
-                black_box("N250"),
-                true,
-                None,
-            )
-        })
+        b.iter(|| shortest_path(black_box(&edges), black_box(0), black_box(250), true, None))
     });
 }
 
 fn bench_allocation(c: &mut Criterion) {
     let edges = synthetic_network(250);
-    let demands = repeated_demands(100, "N250");
+    let demands = repeated_demands(100, 250);
     c.bench_function("allocate_unconstrained_250_edges_100_od", |b| {
         b.iter(|| allocate(black_box(&edges), black_box(&demands), false, true))
     });
@@ -71,14 +54,14 @@ fn bench_allocation(c: &mut Criterion) {
 
 fn bench_capacity_allocation(c: &mut Criterion) {
     let edges = vec![
-        edge("A", "C", "AC", 1.0, Some(100.0)),
-        edge("B", "C", "BC", 1.0, Some(100.0)),
-        edge("C", "D", "CD", 1.0, Some(500.0)),
+        edge(0, 2, 0, 1.0, Some(100.0)),
+        edge(1, 2, 1, 1.0, Some(100.0)),
+        edge(2, 3, 2, 1.0, Some(500.0)),
     ];
     let demands: Vec<Demand> = (0..100)
         .map(|index| Demand {
-            origin: if index % 2 == 0 { "A" } else { "B" }.to_string(),
-            destination: "D".to_string(),
+            origin: if index % 2 == 0 { 0 } else { 1 },
+            destination: 3,
             flow: 10.0,
         })
         .collect();
@@ -89,20 +72,20 @@ fn bench_capacity_allocation(c: &mut Criterion) {
 
 fn bench_disruption(c: &mut Criterion) {
     let edges = vec![
-        edge("A", "B", "AB", 1.0, Some(1_000.0)),
-        edge("B", "C", "BC", 1.0, Some(1_000.0)),
-        edge("A", "C", "AC", 5.0, Some(1_000.0)),
+        edge(0, 1, 0, 1.0, Some(1_000.0)),
+        edge(1, 2, 1, 1.0, Some(1_000.0)),
+        edge(0, 2, 2, 5.0, Some(1_000.0)),
     ];
     let existing: Vec<OdFlow> = (0..100)
         .map(|_| OdFlow {
-            origin: "A".to_string(),
-            destination: "C".to_string(),
+            origin: 0,
+            destination: 2,
             flow: 10.0,
-            edge_path: vec!["AB".to_string(), "BC".to_string()],
+            edge_path: vec![0, 1],
             cost: 2.0,
         })
         .collect();
-    let failed_edges = vec!["AB".to_string()];
+    let failed_edges = vec![0];
     c.bench_function("disrupt_reroute_100_od", |b| {
         b.iter(|| {
             disrupt(
