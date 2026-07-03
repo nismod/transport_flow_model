@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
@@ -14,11 +15,12 @@ use pyo3::types::PyCapsuleMethods;
 use pyo3::types::{PyAny, PyCapsule};
 
 use crate::arrow_ipc;
-use crate::core::{AllocationOutput, DisruptionOutput, OdFlow};
+use crate::core::{AffectedFlow, AllocationOutput, DisruptionOutput};
 
 pub struct DisruptionInputs {
-    pub affected_flows: Vec<OdFlow>,
+    pub affected_flows: Vec<AffectedFlow>,
     pub current_edge_flows: Vec<f64>,
+    pub initial_costs_by_od: Vec<(usize, usize, f64)>,
 }
 
 unsafe extern "C" fn drop_arrow_array_stream_capsule(capsule: *mut ffi::PyObject) {
@@ -149,6 +151,7 @@ fn read_disruption_inputs_batches(
 
     let mut current_edge_flows = vec![0.0; initial_edge_capacity];
     let mut affected_flows = Vec::new();
+    let mut initial_costs_by_od: BTreeMap<(usize, usize), f64> = BTreeMap::new();
 
     for batch in batches {
         let origins = required_column(batch, "origin_id")?;
@@ -180,20 +183,28 @@ fn read_disruption_inputs_batches(
             }
 
             if is_affected {
-                affected_flows.push(OdFlow {
+                *initial_costs_by_od
+                    .entry((origin, destination))
+                    .or_insert(0.0) += cost;
+                affected_flows.push(AffectedFlow {
                     origin,
                     destination,
                     flow,
                     edge_path,
-                    cost,
                 });
             }
         }
     }
 
+    let initial_costs_by_od = initial_costs_by_od
+        .into_iter()
+        .map(|((origin, destination), cost)| (origin, destination, cost))
+        .collect::<Vec<_>>();
+
     Ok(DisruptionInputs {
         affected_flows,
         current_edge_flows,
+        initial_costs_by_od,
     })
 }
 

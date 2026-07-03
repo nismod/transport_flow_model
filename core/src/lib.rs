@@ -54,6 +54,7 @@ fn disrupt_ffi<'py>(
         &network,
         &disruption_inputs.affected_flows,
         &disruption_inputs.current_edge_flows,
+        &disruption_inputs.initial_costs_by_od,
         &failed_edges,
         capacity_constrained,
         directed,

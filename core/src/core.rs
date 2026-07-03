@@ -1,5 +1,6 @@
+use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BTreeMap, BinaryHeap, HashMap};
 
 pub const CAPACITY_EPSILON: f64 = 1.0e-9;
 
@@ -27,6 +28,14 @@ pub struct OdFlow {
     pub flow: f64,
     pub edge_path: Vec<usize>,
     pub cost: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AffectedFlow {
+    pub origin: usize,
+    pub destination: usize,
+    pub flow: f64,
+    pub edge_path: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -112,11 +121,20 @@ struct Graph<'a> {
 
 impl<'a> Graph<'a> {
     fn new(edges: &'a [Edge], directed: bool) -> Self {
+        Self::new_with_filter(edges, directed, None)
+    }
+
+    fn new_with_filter(edges: &'a [Edge], directed: bool, edge_allowed: Option<&[bool]>) -> Self {
         let node_count = max_node_id(edges).map_or(0, |node_id| node_id + 1);
         let mut adjacency = vec![Vec::new(); node_count];
         let mut sequence = 0usize;
 
         for (edge_index, edge) in edges.iter().enumerate() {
+            if edge_allowed.is_some_and(|allowed| !allowed.get(edge_index).copied().unwrap_or(true))
+            {
+                continue;
+            }
+
             adjacency[edge.from].push(AdjacentEdge {
                 next_node: edge.to,
                 edge_index,
@@ -166,6 +184,7 @@ impl<'a> Graph<'a> {
             if state.node == destination {
                 return Some((state.path, state.cost));
             }
+
             if state.cost > best_cost[state.node] + CAPACITY_EPSILON {
                 continue;
             }
@@ -298,10 +317,20 @@ pub fn allocate(
     capacity_constrained: bool,
     directed: bool,
 ) -> AllocationOutput {
+    allocate_with_filter(edges, demands, capacity_constrained, directed, None)
+}
+
+fn allocate_with_filter(
+    edges: &[Edge],
+    demands: &[Demand],
+    capacity_constrained: bool,
+    directed: bool,
+    edge_allowed: Option<&[bool]>,
+) -> AllocationOutput {
     if capacity_constrained {
-        allocate_capacity_constrained(edges, demands, directed)
+        allocate_capacity_constrained(edges, demands, directed, edge_allowed)
     } else {
-        allocate_unconstrained(edges, demands, directed)
+        allocate_unconstrained(edges, demands, directed, edge_allowed)
     }
 }
 
@@ -316,20 +345,35 @@ pub fn disrupt(
     let edge_flow_capacity = max_known_edge_id.map_or(0, |edge_id| edge_id + 1);
     let current_edge_flows = flow_by_edge(existing_flows, edge_flow_capacity);
     let failed_edge_flags = edge_flags(failed_edges, max_known_edge_id);
-    let affected_flows = existing_flows
-        .iter()
-        .filter(|flow| {
-            flow.edge_path
-                .iter()
-                .any(|edge_id| failed_edge_flags.get(*edge_id).copied().unwrap_or(false))
-        })
-        .cloned()
+    let mut initial_costs_by_od: BTreeMap<(usize, usize), f64> = BTreeMap::new();
+    let mut affected_flows = Vec::new();
+    for flow in existing_flows {
+        let is_affected = flow
+            .edge_path
+            .iter()
+            .any(|edge_id| failed_edge_flags.get(*edge_id).copied().unwrap_or(false));
+        if is_affected {
+            *initial_costs_by_od
+                .entry((flow.origin, flow.destination))
+                .or_insert(0.0) += flow.cost;
+            affected_flows.push(AffectedFlow {
+                origin: flow.origin,
+                destination: flow.destination,
+                flow: flow.flow,
+                edge_path: flow.edge_path.clone(),
+            });
+        }
+    }
+    let initial_costs_by_od = initial_costs_by_od
+        .into_iter()
+        .map(|((origin, destination), cost)| (origin, destination, cost))
         .collect::<Vec<_>>();
 
     disrupt_with_preprocessed(
         edges,
         &affected_flows,
         &current_edge_flows,
+        &initial_costs_by_od,
         failed_edges,
         capacity_constrained,
         directed,
@@ -338,14 +382,18 @@ pub fn disrupt(
 
 pub fn disrupt_with_preprocessed(
     edges: &[Edge],
-    affected_flows: &[OdFlow],
+    affected_flows: &[AffectedFlow],
     current_edge_flows: &[f64],
+    initial_costs_by_od: &[(usize, usize, f64)],
     failed_edges: &[usize],
     capacity_constrained: bool,
     directed: bool,
 ) -> DisruptionOutput {
     let max_known_edge_id = [
-        max_edge_id(edges, affected_flows),
+        max_edge_id_in_paths(
+            edges,
+            affected_flows.iter().map(|flow| flow.edge_path.as_slice()),
+        ),
         current_edge_flows
             .len()
             .checked_sub(1)
@@ -382,28 +430,22 @@ pub fn disrupt_with_preprocessed(
     } else {
         edges
     };
-    let reroute_edges: Vec<Edge> = reroute_source_edges
+    let edge_allowed = reroute_source_edges
         .iter()
-        .filter(|edge| !failed_edge_flags.get(edge.id).copied().unwrap_or(false))
-        .cloned()
-        .collect();
-    let affected_demands: Vec<Demand> = affected_flows
-        .iter()
-        .map(|flow| Demand {
-            origin: flow.origin,
-            destination: flow.destination,
-            flow: flow.flow,
-        })
-        .collect();
-    let allocation = allocate(
-        &reroute_edges,
+        .map(|edge| !failed_edge_flags.get(edge.id).copied().unwrap_or(false))
+        .collect::<Vec<_>>();
+
+    let affected_demands = demands_from_affected_flows(affected_flows);
+    let allocation = allocate_with_filter(
+        reroute_source_edges,
         &affected_demands,
         capacity_constrained,
         directed,
+        Some(&edge_allowed),
     );
     let network_flows =
         network_flows_from_edges_and_od_flows(&post_disruption_edges, &allocation.od_flows);
-    let losses = losses_from_flows(&affected_flows, &allocation.od_flows);
+    let losses = losses_from_initial_costs(initial_costs_by_od, &allocation.od_flows);
 
     post_disruption_edges.clear();
 
@@ -415,8 +457,13 @@ pub fn disrupt_with_preprocessed(
     }
 }
 
-fn allocate_unconstrained(edges: &[Edge], demands: &[Demand], directed: bool) -> AllocationOutput {
-    let graph = Graph::new(edges, directed);
+fn allocate_unconstrained(
+    edges: &[Edge],
+    demands: &[Demand],
+    directed: bool,
+    edge_allowed: Option<&[bool]>,
+) -> AllocationOutput {
+    let graph = Graph::new_with_filter(edges, directed, edge_allowed);
     let mut od_flows = Vec::new();
     let mut unassigned_od = Vec::new();
 
@@ -460,8 +507,9 @@ fn allocate_capacity_constrained(
     edges: &[Edge],
     demands: &[Demand],
     directed: bool,
+    edge_allowed: Option<&[bool]>,
 ) -> AllocationOutput {
-    let graph = Graph::new(edges, directed);
+    let graph = Graph::new_with_filter(edges, directed, edge_allowed);
     let mut residual_capacity = initial_residual_capacity(edges);
     let mut pending = demands.to_vec();
     let mut allocated_rows: Vec<Route> = Vec::new();
@@ -612,12 +660,15 @@ fn edge_flows_from_edges(edges: &[Edge]) -> Vec<EdgeFlow> {
 fn edges_with_flows_removed_from_affected_paths(
     edges: &[Edge],
     current_edge_flows: &[f64],
-    affected_flows: &[OdFlow],
+    affected_flows: &[AffectedFlow],
 ) -> Vec<Edge> {
-    let edge_flow_capacity = max_edge_id(edges, affected_flows)
-        .map_or(0, |edge_id| edge_id + 1)
-        .max(current_edge_flows.len());
-    let affected_by_edge = flow_by_edge(affected_flows, edge_flow_capacity);
+    let edge_flow_capacity = max_edge_id_in_paths(
+        edges,
+        affected_flows.iter().map(|flow| flow.edge_path.as_slice()),
+    )
+    .map_or(0, |edge_id| edge_id + 1)
+    .max(current_edge_flows.len());
+    let affected_by_edge = flow_by_edge_affected(affected_flows, edge_flow_capacity);
     let has_existing_edge_loads = edges.iter().any(|edge| edge.flow.abs() > CAPACITY_EPSILON);
 
     edges
@@ -648,6 +699,30 @@ fn flow_by_edge(od_flows: &[OdFlow], edge_count: usize) -> Vec<f64> {
     edge_flows
 }
 
+fn flow_by_edge_affected(affected_flows: &[AffectedFlow], edge_count: usize) -> Vec<f64> {
+    let mut edge_flows = vec![0.0; edge_count];
+    for flow in affected_flows {
+        for edge_id in &flow.edge_path {
+            if let Some(edge_flow) = edge_flows.get_mut(*edge_id) {
+                *edge_flow += flow.flow;
+            }
+        }
+    }
+    edge_flows
+}
+
+fn demands_from_affected_flows(affected_flows: &[AffectedFlow]) -> Vec<Demand> {
+    let mut demands = Vec::with_capacity(affected_flows.len());
+    for flow in affected_flows {
+        demands.push(Demand {
+            origin: flow.origin,
+            destination: flow.destination,
+            flow: flow.flow,
+        });
+    }
+    demands
+}
+
 fn aggregate_demands(demands: &[Demand]) -> Vec<Demand> {
     if demands.is_empty() {
         return Vec::new();
@@ -669,27 +744,35 @@ fn aggregate_demands(demands: &[Demand]) -> Vec<Demand> {
     aggregated
 }
 
-fn losses_from_flows(initial: &[OdFlow], disrupted: &[OdFlow]) -> Vec<Loss> {
+fn losses_from_initial_costs(
+    initial_costs_by_od: &[(usize, usize, f64)],
+    disrupted: &[OdFlow],
+) -> Vec<Loss> {
     if disrupted.is_empty() {
         return Vec::new();
     }
 
-    let mut initial_costs = initial
-        .iter()
-        .map(|flow| (flow.origin, flow.destination, flow.cost))
-        .collect::<Vec<_>>();
-    initial_costs.sort_by_key(|(origin, destination, _)| (*origin, *destination));
-    let initial_costs = sum_costs(initial_costs);
+    let initial_costs: Cow<'_, [(usize, usize, f64)]> = if is_sorted_by_od(initial_costs_by_od) {
+        Cow::Borrowed(initial_costs_by_od)
+    } else {
+        let mut rows = initial_costs_by_od.to_vec();
+        rows.sort_by_key(|(origin, destination, _)| (*origin, *destination));
+        Cow::Owned(rows)
+    };
 
-    let mut disrupted_rows = disrupted
-        .iter()
-        .map(|flow| (flow.origin, flow.destination, flow.flow, flow.cost))
-        .collect::<Vec<_>>();
-    disrupted_rows.sort_by_key(|(origin, destination, _, _)| (*origin, *destination));
+    // Aggregate disrupted flows per OD pair without constructing intermediate tuple vectors.
+    let mut disrupted_by_od: BTreeMap<(usize, usize), (f64, f64)> = BTreeMap::new();
+    for flow in disrupted {
+        let entry = disrupted_by_od
+            .entry((flow.origin, flow.destination))
+            .or_insert((0.0, 0.0));
+        entry.0 += flow.flow;
+        entry.1 += flow.cost;
+    }
 
-    let mut losses = Vec::new();
-    for (origin, destination, flow, disrupted_cost) in sum_flows_and_costs(disrupted_rows) {
-        let initial_cost = lookup_cost(&initial_costs, origin, destination);
+    let mut losses = Vec::with_capacity(disrupted_by_od.len());
+    for ((origin, destination), (flow, disrupted_cost)) in disrupted_by_od {
+        let initial_cost = lookup_cost(initial_costs.as_ref(), origin, destination);
         losses.push(Loss {
             origin,
             destination,
@@ -702,33 +785,9 @@ fn losses_from_flows(initial: &[OdFlow], disrupted: &[OdFlow]) -> Vec<Loss> {
     losses
 }
 
-fn sum_costs(rows: Vec<(usize, usize, f64)>) -> Vec<(usize, usize, f64)> {
-    let mut summed: Vec<(usize, usize, f64)> = Vec::new();
-    for (origin, destination, cost) in rows {
-        if let Some(last) = summed.last_mut() {
-            if last.0 == origin && last.1 == destination {
-                last.2 += cost;
-                continue;
-            }
-        }
-        summed.push((origin, destination, cost));
-    }
-    summed
-}
-
-fn sum_flows_and_costs(rows: Vec<(usize, usize, f64, f64)>) -> Vec<(usize, usize, f64, f64)> {
-    let mut summed: Vec<(usize, usize, f64, f64)> = Vec::new();
-    for (origin, destination, flow, cost) in rows {
-        if let Some(last) = summed.last_mut() {
-            if last.0 == origin && last.1 == destination {
-                last.2 += flow;
-                last.3 += cost;
-                continue;
-            }
-        }
-        summed.push((origin, destination, flow, cost));
-    }
-    summed
+fn is_sorted_by_od(rows: &[(usize, usize, f64)]) -> bool {
+    rows.windows(2)
+        .all(|pair| (pair[0].0, pair[0].1) <= (pair[1].0, pair[1].1))
 }
 
 fn lookup_cost(rows: &[(usize, usize, f64)], origin: usize, destination: usize) -> f64 {
@@ -772,6 +831,17 @@ fn max_edge_id(edges: &[Edge], od_flows: &[OdFlow]) -> Option<usize> {
                 .iter()
                 .flat_map(|od_flow| od_flow.edge_path.iter().copied()),
         )
+        .max()
+}
+
+fn max_edge_id_in_paths<'a, I>(edges: &[Edge], paths: I) -> Option<usize>
+where
+    I: Iterator<Item = &'a [usize]>,
+{
+    edges
+        .iter()
+        .map(|edge| edge.id)
+        .chain(paths.flat_map(|path| path.iter().copied()))
         .max()
 }
 
