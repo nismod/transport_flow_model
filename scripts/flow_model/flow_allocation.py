@@ -3,6 +3,7 @@
 """This code estimates the routes between Origin-Destination pairs over a network graph under capacity constraints"""
 
 import argparse
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -27,6 +28,7 @@ def main(config):
     results_folder.mkdir(parents=True, exist_ok=True)
 
     # Read network CSV and normalize to the internal schema.
+    logging.info("Reading %s", network_data_folder / "network.csv")
     network = Network.from_csv(
         network_data_folder / "network.csv",
         {
@@ -49,6 +51,7 @@ def main(config):
     )
 
     # Read OD CSV and normalize to the internal schema.
+    logging.info("Reading %s", flow_od_folder / "od.csv")
     od = OD.from_csv(
         flow_od_folder / "od.csv",
         # Specify OD columns for origin, destination, and flow values
@@ -67,8 +70,10 @@ def main(config):
     od_dataframe = od.to_dataframe(copy=True)
 
     # Perform capacity-constrained flow allocation
+    logging.info("network.allocate")
     allocation_result = network.allocate(od, capacity_constrained=True, directed=True)
 
+    logging.info("results.to_dataframe")
     flow_routes = allocation_result.od_flows.to_dataframe(copy=False)
     unassigned_routes = allocation_result.unassigned_od.to_dataframe(copy=False)
     network_dataframe = allocation_result.network_flows.to_dataframe(copy=False)
@@ -78,14 +83,17 @@ def main(config):
     ########################
 
     # Store network dataframe with final flows
+    logging.info("Writing %s", results_folder / "network_edge_total_flows.csv")
     network_dataframe.to_csv(
         results_folder / "network_edge_total_flows.csv", index=False
     )
 
     # Store unassigned OD flows
+    logging.info("Writing %s", results_folder / "unassigned_od_flows.csv")
     unassigned_routes.to_csv(results_folder / "unassigned_od_flows.csv", index=False)
 
     # Create ODFlows object and save flow paths
+    logging.info("Writing ODFlows")
     od_flows = ODFlows(flow_routes)
     od_flows_dataframe = od_flows.to_dataframe(copy=False)
     # We might have more flow columns in the OD matrix have we would like to partition
@@ -118,6 +126,10 @@ def main(config):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        format="%(asctime)s %(process)d %(filename)s %(message)s", level=logging.INFO
+    )
+    logging.info("Start flow_allocation.py")
     parser = argparse.ArgumentParser(
         prog="flow_allocation",
         description="Allocate origin-destination flows to a network",
@@ -126,3 +138,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     CONFIG = load_config(args.config)
     main(CONFIG)
+    logging.info("Done.")
