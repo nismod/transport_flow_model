@@ -1,10 +1,11 @@
 """Radiation model for OD estimation using network distance."""
 
-from collections import defaultdict
-from heapq import heappop, heappush
 from math import inf
 
 import pandas as pd
+import pyarrow as pa
+
+import transport_flow_model.core as core
 
 
 class RadiationModel:
@@ -117,6 +118,26 @@ class RadiationModel:
         if len(zone_list) < 2:
             raise ValueError("Need at least 2 zones to generate OD matrix")
 
+        # Build integer node mapping and normalized network table once for all origins
+        node_id_map = list(
+            dict.fromkeys(
+                list(network_data["edge_from"]) + list(network_data["edge_to"])
+            )
+        )
+        node_value_to_id = {v: i for i, v in enumerate(node_id_map)}
+        net_cols: dict = {
+            "edge_from": network_data["edge_from"].map(node_value_to_id),
+            "edge_to": network_data["edge_to"].map(node_value_to_id),
+            "edge_id": range(len(network_data)),
+        }
+        if "cost" in network_data.columns:
+            net_cols["cost"] = pd.to_numeric(
+                network_data["cost"], errors="coerce"
+            ).fillna(1.0)
+        network_table = pa.Table.from_pandas(
+            pd.DataFrame(net_cols), preserve_index=False
+        )
+
         results = []
 
         # For each origin zone
@@ -125,7 +146,9 @@ class RadiationModel:
             m_i = relevance_map[origin_zone_id]
 
             # Get shortest paths from origin to all other zones
-            distances = self._shortest_paths_from(origin_node)
+            distances = self._shortest_paths_from(
+                origin_node, network_table, node_value_to_id, node_id_map
+            )
 
             # For each destination zone
             for destination_zone_id in zone_list:
@@ -170,51 +193,34 @@ class RadiationModel:
 
         return pd.DataFrame(results)
 
-    def _shortest_paths_from(self, origin_node):
+    def _shortest_paths_from(
+        self, origin_node, network_table, node_value_to_id, node_id_map
+    ):
         """Compute shortest paths from origin_node to all reachable nodes.
 
         Parameters
         ----------
-        origin_node : str
-            Origin node identifier
+        origin_node
+            Origin node identifier (original, user-facing value)
+        network_table : pa.Table
+            Normalized network table with integer node IDs (built once per generate call)
+        node_value_to_id : dict
+            Mapping from original node IDs to internal integers
+        node_id_map : list
+            Mapping from internal integers back to original node IDs
 
         Returns
         -------
         dict
             Mapping {node_id → distance}
         """
-        network_data = self.network.to_dataframe()
-
-        # Build adjacency list
-        adjacency = defaultdict(list)
-        has_cost = "cost" in network_data.columns
-
-        for row in network_data.itertuples(index=False):
-            edge_from = row.edge_from
-            edge_to = row.edge_to
-            edge_cost = getattr(row, "cost") if has_cost else 1.0
-
-            adjacency[edge_from].append((edge_to, float(edge_cost)))
-            adjacency[edge_to].append((edge_from, float(edge_cost)))
-
-        # Dijkstra's algorithm
-        distances = {origin_node: 0.0}
-        heap = [(0.0, origin_node)]
-
-        while heap:
-            current_dist, current_node = heappop(heap)
-
-            if current_dist > distances.get(current_node, inf):
-                continue
-
-            for neighbor, edge_cost in adjacency[current_node]:
-                new_dist = current_dist + edge_cost
-
-                if new_dist < distances.get(neighbor, inf):
-                    distances[neighbor] = new_dist
-                    heappush(heap, (new_dist, neighbor))
-
-        return distances
+        if origin_node not in node_value_to_id:
+            return {}
+        int_origin = node_value_to_id[origin_node]
+        result = core.shortest_paths_from(network_table, int_origin, directed=False)
+        node_ids = result.column("node_id").to_pylist()
+        costs = result.column("cost").to_pylist()
+        return {node_id_map[nid]: cost for nid, cost in zip(node_ids, costs)}
 
     def _count_intervening_opportunities(
         self,

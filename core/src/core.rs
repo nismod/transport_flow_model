@@ -352,6 +352,20 @@ pub fn shortest_path(
         .map(|(path, cost)| (graph.edge_path_ids(&path), cost))
 }
 
+/// Return (node_id, cost) for every node reachable from `origin`.
+pub fn shortest_paths_from(edges: &[Edge], origin: usize, directed: bool) -> Vec<(usize, f64)> {
+    let graph = Graph::new(edges, directed);
+    let Some(tree) = graph.single_source_shortest_path_tree(origin, None) else {
+        return Vec::new();
+    };
+    tree.best_cost
+        .iter()
+        .enumerate()
+        .filter(|(_, cost)| cost.is_finite())
+        .map(|(node_id, &cost)| (node_id, cost))
+        .collect()
+}
+
 pub fn allocate(
     edges: &[Edge],
     demands: &[Demand],

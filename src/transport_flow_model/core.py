@@ -50,6 +50,17 @@ def disrupt(
     return {name: _from_ffi_stream(payload) for name, payload in result.items()}
 
 
+def shortest_paths_from(
+    network: pa.Table | pa.RecordBatch | pd.DataFrame,
+    origin: int,
+    *,
+    directed: bool = True,
+) -> pa.Table:
+    """Return (node_id: u64, cost: f64) table for all nodes reachable from origin."""
+    result = _core.shortest_paths_from_ffi(_to_table(network), origin, directed)
+    return _from_ffi_stream(result)
+
+
 def _to_table(data: pa.Table | pa.RecordBatch | pd.DataFrame) -> pa.Table:
     if isinstance(data, pa.Table):
         return data

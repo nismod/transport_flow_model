@@ -69,10 +69,23 @@ fn disrupt_ffi<'py>(
     Ok(result)
 }
 
+#[pyfunction]
+fn shortest_paths_from_ffi<'py>(
+    py: Python<'py>,
+    network: &Bound<'py, PyAny>,
+    origin: usize,
+    directed: bool,
+) -> PyResult<Bound<'py, PyAny>> {
+    let edges = arrow_ffi::read_network_ffi(network).map_err(PyValueError::new_err)?;
+    let paths = core::shortest_paths_from(&edges, origin, directed);
+    arrow_ffi::shortest_paths_to_ffi(py, &paths).map_err(PyValueError::new_err)
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_function(wrap_pyfunction!(allocate_ffi, m)?)?;
     m.add_function(wrap_pyfunction!(disrupt_ffi, m)?)?;
+    m.add_function(wrap_pyfunction!(shortest_paths_from_ffi, m)?)?;
     Ok(())
 }

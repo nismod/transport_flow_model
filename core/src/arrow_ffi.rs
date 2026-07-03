@@ -506,3 +506,22 @@ fn integer_array(values: impl Iterator<Item = usize>) -> ArrayRef {
         values.map(|value| value as u64).collect::<Vec<_>>(),
     )) as ArrayRef
 }
+
+pub fn shortest_paths_to_ffi<'py>(
+    py: Python<'py>,
+    paths: &[(usize, f64)],
+) -> Result<Bound<'py, PyAny>, String> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("node_id", DataType::UInt64, false),
+        Field::new("cost", DataType::Float64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            integer_array(paths.iter().map(|(node_id, _)| *node_id)),
+            float_array(paths.iter().map(|(_, cost)| *cost)),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    batches_to_pyarrow_stream(py, vec![batch])
+}
