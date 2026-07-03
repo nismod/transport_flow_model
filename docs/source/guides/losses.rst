@@ -8,11 +8,11 @@ cost and summed initial cost.
 Grouped path costs
 ------------------
 
-``OD.losses_from_flows`` groups rows by ``origin_id`` and ``destination_id``.
+``compute_losses`` groups rows by ``origin_id`` and ``destination_id``.
 This is useful when one OD pair has multiple allocated rows.
 
 >>> import pandas as pd
->>> from transport_flow_model.model import OD, ODFlows
+>>> from transport_flow_model.model import ODFlows, compute_losses
 >>> initial = ODFlows(
 ...     pd.DataFrame(
 ...         {
@@ -35,7 +35,7 @@ This is useful when one OD pair has multiple allocated rows.
 ...         }
 ...     )
 ... )
->>> losses = OD.losses_from_flows(initial, disrupted)
+>>> losses = compute_losses(initial, disrupted)
 >>> losses.to_dataframe().sort_values(
 ...     ["origin_id", "destination_id"]
 ... ).to_dict("records")

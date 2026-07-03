@@ -153,37 +153,6 @@ class OD(_TabularData):
         """Return a defensive copy of the normalized tabular data."""
         return self._data.copy()
 
-    @classmethod
-    def losses_from_flows(cls, initial: ODFlows, disrupted: ODFlows) -> OD:
-        """Aggregate per-OD rerouting losses from initial and disrupted paths."""
-        initial_data = initial.to_dataframe()
-        disrupted_data = disrupted.to_dataframe()
-
-        if disrupted_data.empty:
-            return cls(pd.DataFrame(columns=list(LOSS_COLUMNS)))
-
-        initial_costs = (
-            initial_data.groupby(["origin_id", "destination_id"], as_index=False)[
-                "cost"
-            ]
-            .sum()
-            .rename(columns={"cost": "initial_cost"})
-        )
-        disrupted_costs = (
-            disrupted_data.groupby(["origin_id", "destination_id"], as_index=False)
-            .agg({"flow": "sum", "cost": "sum"})
-            .rename(columns={"cost": "disrupted_cost"})
-        )
-        losses = disrupted_costs.merge(
-            initial_costs,
-            on=["origin_id", "destination_id"],
-            how="left",
-        )
-        losses["initial_cost"] = losses["initial_cost"].fillna(0)
-        losses["rerouting_loss"] = losses["disrupted_cost"] - losses["initial_cost"]
-        losses = losses.loc[:, list(LOSS_COLUMNS)]
-        return cls(_coerce_integral_numeric_columns(losses))
-
 
 class Network(_TabularData):
     """Base network model class.
@@ -336,6 +305,35 @@ class NetworkFlows(_TabularData):
             edge_flows
         ).fillna(0)
         return cls(_coerce_integral_numeric_columns(network_data))
+
+
+def compute_losses(initial: ODFlows, disrupted: ODFlows) -> OD:
+    """Aggregate per-OD rerouting losses from initial and disrupted paths."""
+    initial_data = initial.to_dataframe()
+    disrupted_data = disrupted.to_dataframe()
+
+    if disrupted_data.empty:
+        return OD(pd.DataFrame(columns=list(LOSS_COLUMNS)))
+
+    initial_costs = (
+        initial_data.groupby(["origin_id", "destination_id"], as_index=False)["cost"]
+        .sum()
+        .rename(columns={"cost": "initial_cost"})
+    )
+    disrupted_costs = (
+        disrupted_data.groupby(["origin_id", "destination_id"], as_index=False)
+        .agg({"flow": "sum", "cost": "sum"})
+        .rename(columns={"cost": "disrupted_cost"})
+    )
+    losses = disrupted_costs.merge(
+        initial_costs,
+        on=["origin_id", "destination_id"],
+        how="left",
+    )
+    losses["initial_cost"] = losses["initial_cost"].fillna(0)
+    losses["rerouting_loss"] = losses["disrupted_cost"] - losses["initial_cost"]
+    losses = losses.loc[:, list(LOSS_COLUMNS)]
+    return OD(_coerce_integral_numeric_columns(losses))
 
 
 @dataclass

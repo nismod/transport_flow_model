@@ -1,4 +1,4 @@
-from .model import Network, OD, ODFlows
+from .model import Network, OD, ODFlows, compute_losses
 from .radiation import RadiationModel
 
 __all__ = [
@@ -6,4 +6,5 @@ __all__ = [
     "OD",
     "ODFlows",
     "RadiationModel",
+    "compute_losses",
 ]

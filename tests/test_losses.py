@@ -1,6 +1,6 @@
 import pandas as pd
 
-from transport_flow_model.model import OD, ODFlows
+from transport_flow_model.model import ODFlows, compute_losses
 
 
 def test_losses_from_flows_groups_costs_by_od_pair():
@@ -32,7 +32,7 @@ def test_losses_from_flows_groups_costs_by_od_pair():
         )
     )
 
-    losses = OD.losses_from_flows(initial, disrupted)
+    losses = compute_losses(initial, disrupted)
 
     expected = pd.DataFrame(
         {
