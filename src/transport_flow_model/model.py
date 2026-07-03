@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from math import isfinite
 from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
+import pyarrow as pa
+import pyarrow.compute as pc
 
 import transport_flow_model.core as core
 
@@ -38,13 +39,22 @@ def _coerce_integral_numeric_columns(data: pd.DataFrame) -> pd.DataFrame:
         if data.empty:
             continue
         values = pd.to_numeric(data[column], errors="coerce")
-        if values.isna().any():
-            continue
-        if all(isfinite(v) and abs(v - round(v)) <= CAPACITY_EPSILON for v in values):
+        if _is_integral_numeric_column(values):
             data[column] = values.round().astype("int64")
         else:
             data[column] = values
     return data
+
+
+def _is_integral_numeric_column(values: pd.Series) -> bool:
+    column = pa.array(values, from_pandas=True)
+    if column.null_count:
+        return False
+
+    rounded = pc.round(column)
+    difference = pc.abs(pc.subtract(column, rounded))
+    close_to_integer = pc.less_equal(difference, CAPACITY_EPSILON)
+    return pc.all(pc.is_finite(column)).as_py() and pc.all(close_to_integer).as_py()
 
 
 @dataclass
