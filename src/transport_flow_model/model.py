@@ -243,7 +243,7 @@ class Network:
     def __getattr__(self, name):
         return _dataframe_delegate(self, name)
 
-    def to_dataframe(self, copy=True) -> pd.DataFrame:
+    def to_dataframe(self, copy=False) -> pd.DataFrame:
         """Return the normalized tabular data."""
         if copy:
             return self._data.copy()
