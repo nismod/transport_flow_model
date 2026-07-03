@@ -595,16 +595,16 @@ def _indexed_id_map(
 def _unique_indexed_id_map(
     column: pd.Series,
 ) -> tuple[dict[object, int] | None, list[object] | None]:
-    value_to_id = {}
-    id_to_value = []
-    for value in column:
-        try:
-            if value in value_to_id:
-                return None, None
-            value_to_id[value] = len(id_to_value)
-        except TypeError:
-            return None, None
-        id_to_value.append(value)
+    try:
+        _, uniques = pd.factorize(column, sort=False, use_na_sentinel=False)
+    except TypeError:
+        return None, None
+
+    if len(uniques) != len(column):
+        return None, None
+
+    id_to_value = uniques.tolist()
+    value_to_id = {value: index for index, value in enumerate(id_to_value)}
     return value_to_id, id_to_value
 
 
