@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BinaryHeap, HashMap};
+use std::collections::{BTreeMap, BinaryHeap};
 
 pub const CAPACITY_EPSILON: f64 = 1.0e-9;
 
@@ -28,14 +28,6 @@ pub struct OdFlow {
     pub flow: f64,
     pub edge_path: Vec<usize>,
     pub cost: f64,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct AffectedFlow {
-    pub origin: usize,
-    pub destination: usize,
-    pub flow: f64,
-    pub edge_path: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -78,7 +70,6 @@ struct QueueState {
     cost: f64,
     order: usize,
     node: usize,
-    path: Vec<usize>,
 }
 
 impl Eq for QueueState {}
@@ -111,6 +102,13 @@ struct AdjacentEdge {
     edge_index: usize,
     edge_cost: f64,
     order: usize,
+}
+
+#[derive(Debug)]
+struct ShortestPathTree {
+    origin: usize,
+    best_cost: Vec<f64>,
+    prev_edge: Vec<Option<usize>>,
 }
 
 #[derive(Debug)]
@@ -174,15 +172,18 @@ impl<'a> Graph<'a> {
             cost: 0.0,
             order: 0,
             node: origin,
-            path: Vec::new(),
         }]);
         let mut best_cost = vec![f64::INFINITY; self.adjacency.len()];
+        let mut prev_edge = vec![None; self.adjacency.len()];
         best_cost[origin] = 0.0;
         let mut counter = 1usize;
 
         while let Some(state) = heap.pop() {
             if state.node == destination {
-                return Some((state.path, state.cost));
+                return Some((
+                    self.reconstruct_path(&prev_edge, origin, destination),
+                    state.cost,
+                ));
             }
 
             if state.cost > best_cost[state.node] + CAPACITY_EPSILON {
@@ -199,13 +200,11 @@ impl<'a> Graph<'a> {
                 let next_cost = state.cost + adjacent.edge_cost;
                 if next_cost + CAPACITY_EPSILON < best_cost[adjacent.next_node] {
                     best_cost[adjacent.next_node] = next_cost;
-                    let mut next_path = state.path.clone();
-                    next_path.push(adjacent.edge_index);
+                    prev_edge[adjacent.next_node] = Some(adjacent.edge_index);
                     heap.push(QueueState {
                         cost: next_cost,
                         order: adjacent.order + counter,
                         node: adjacent.next_node,
-                        path: next_path,
                     });
                     counter += 1;
                 }
@@ -215,25 +214,22 @@ impl<'a> Graph<'a> {
         None
     }
 
-    fn single_source_shortest_paths(
+    fn single_source_shortest_path_tree(
         &self,
         origin: usize,
         residual_capacity: Option<&[f64]>,
-    ) -> HashMap<usize, (Vec<usize>, f64)> {
+    ) -> Option<ShortestPathTree> {
         if origin >= self.adjacency.len() {
-            return HashMap::new();
+            return None;
         }
-
-        let mut paths = HashMap::new();
-        paths.insert(origin, (Vec::new(), 0.0));
 
         let mut heap = BinaryHeap::from([QueueState {
             cost: 0.0,
             order: 0,
             node: origin,
-            path: Vec::new(),
         }]);
         let mut best_cost = vec![f64::INFINITY; self.adjacency.len()];
+        let mut prev_edge = vec![None; self.adjacency.len()];
         best_cost[origin] = 0.0;
         let mut counter = 1usize;
 
@@ -252,21 +248,66 @@ impl<'a> Graph<'a> {
                 let next_cost = state.cost + adjacent.edge_cost;
                 if next_cost + CAPACITY_EPSILON < best_cost[adjacent.next_node] {
                     best_cost[adjacent.next_node] = next_cost;
-                    let mut next_path = state.path.clone();
-                    next_path.push(adjacent.edge_index);
-                    paths.insert(adjacent.next_node, (next_path.clone(), next_cost));
+                    prev_edge[adjacent.next_node] = Some(adjacent.edge_index);
                     heap.push(QueueState {
                         cost: next_cost,
                         order: adjacent.order + counter,
                         node: adjacent.next_node,
-                        path: next_path,
                     });
                     counter += 1;
                 }
             }
         }
 
-        paths
+        Some(ShortestPathTree {
+            origin,
+            best_cost,
+            prev_edge,
+        })
+    }
+
+    fn path_from_tree(
+        &self,
+        tree: &ShortestPathTree,
+        destination: usize,
+    ) -> Option<(Vec<usize>, f64)> {
+        if destination >= tree.best_cost.len() || !tree.best_cost[destination].is_finite() {
+            return None;
+        }
+        Some((
+            self.reconstruct_path(&tree.prev_edge, tree.origin, destination),
+            tree.best_cost[destination],
+        ))
+    }
+
+    fn reconstruct_path(
+        &self,
+        prev_edge: &[Option<usize>],
+        origin: usize,
+        destination: usize,
+    ) -> Vec<usize> {
+        if origin == destination {
+            return Vec::new();
+        }
+
+        let mut path = Vec::new();
+        let mut node = destination;
+        while node != origin {
+            let Some(edge_index) = prev_edge[node] else {
+                return Vec::new();
+            };
+            path.push(edge_index);
+            let edge = &self.edges[edge_index];
+            node = if edge.to == node {
+                edge.from
+            } else if edge.from == node {
+                edge.to
+            } else {
+                return Vec::new();
+            };
+        }
+        path.reverse();
+        path
     }
 
     fn edge_path_ids(&self, edge_path: &[usize]) -> Vec<usize> {
@@ -356,11 +397,12 @@ pub fn disrupt(
             *initial_costs_by_od
                 .entry((flow.origin, flow.destination))
                 .or_insert(0.0) += flow.cost;
-            affected_flows.push(AffectedFlow {
+            affected_flows.push(OdFlow {
                 origin: flow.origin,
                 destination: flow.destination,
                 flow: flow.flow,
                 edge_path: flow.edge_path.clone(),
+                cost: flow.cost,
             });
         }
     }
@@ -382,7 +424,7 @@ pub fn disrupt(
 
 pub fn disrupt_with_preprocessed(
     edges: &[Edge],
-    affected_flows: &[AffectedFlow],
+    affected_flows: &[OdFlow],
     current_edge_flows: &[f64],
     initial_costs_by_od: &[(usize, usize, f64)],
     failed_edges: &[usize],
@@ -467,21 +509,33 @@ fn allocate_unconstrained(
     let mut od_flows = Vec::new();
     let mut unassigned_od = Vec::new();
 
-    // Group demands by origin
-    let mut demands_by_origin: HashMap<usize, Vec<&Demand>> = HashMap::new();
+    let mut demands_by_origin = vec![Vec::new(); demand_origin_count(demands)];
     for demand in demands {
-        demands_by_origin
-            .entry(demand.origin)
-            .or_insert_with(Vec::new)
-            .push(demand);
+        demands_by_origin[demand.origin].push(demand);
     }
 
     // Process each origin with single-source shortest paths
-    for (origin, origin_demands) in demands_by_origin {
-        let paths = graph.single_source_shortest_paths(origin, None);
+    for (origin, origin_demands) in demands_by_origin.into_iter().enumerate() {
+        if origin_demands.is_empty() {
+            continue;
+        }
+        let Some(path_tree) = graph.single_source_shortest_path_tree(origin, None) else {
+            unassigned_od.extend(origin_demands.into_iter().cloned());
+            continue;
+        };
+        let mut path_cache = vec![None; path_tree.best_cost.len()];
 
         for demand in origin_demands {
-            match paths.get(&demand.destination) {
+            if demand.destination < path_cache.len() && path_cache[demand.destination].is_none() {
+                path_cache[demand.destination] =
+                    Some(graph.path_from_tree(&path_tree, demand.destination));
+            }
+
+            match path_cache
+                .get(demand.destination)
+                .and_then(Option::as_ref)
+                .and_then(Option::as_ref)
+            {
                 Some((edge_path, cost)) => {
                     od_flows.push(OdFlow {
                         origin: demand.origin,
@@ -517,23 +571,39 @@ fn allocate_capacity_constrained(
 
     while !pending.is_empty() {
         // Group pending demands by origin
-        let mut demands_by_origin: HashMap<usize, Vec<Demand>> = HashMap::new();
+        let mut demands_by_origin = vec![Vec::new(); demand_origin_count(&pending)];
         for demand in &pending {
-            demands_by_origin
-                .entry(demand.origin)
-                .or_insert_with(Vec::new)
-                .push(demand.clone());
+            demands_by_origin[demand.origin].push(demand.clone());
         }
 
         let mut route_rows = Vec::new();
         let mut next_pending = Vec::new();
 
         // Process each origin with single-source shortest paths
-        for (origin, origin_demands) in demands_by_origin {
-            let paths = graph.single_source_shortest_paths(origin, Some(&residual_capacity));
+        for (origin, origin_demands) in demands_by_origin.into_iter().enumerate() {
+            if origin_demands.is_empty() {
+                continue;
+            }
+            let Some(path_tree) =
+                graph.single_source_shortest_path_tree(origin, Some(&residual_capacity))
+            else {
+                unassigned_rows.extend(origin_demands);
+                continue;
+            };
+            let mut path_cache = vec![None; path_tree.best_cost.len()];
 
             for demand in origin_demands {
-                match paths.get(&demand.destination) {
+                if demand.destination < path_cache.len() && path_cache[demand.destination].is_none()
+                {
+                    path_cache[demand.destination] =
+                        Some(graph.path_from_tree(&path_tree, demand.destination));
+                }
+
+                match path_cache
+                    .get(demand.destination)
+                    .and_then(Option::as_ref)
+                    .and_then(Option::as_ref)
+                {
                     Some((edge_path, cost)) => {
                         route_rows.push(Route {
                             origin: demand.origin,
@@ -627,6 +697,14 @@ fn initial_residual_capacity(edges: &[Edge]) -> Vec<f64> {
         .collect()
 }
 
+fn demand_origin_count(demands: &[Demand]) -> usize {
+    demands
+        .iter()
+        .map(|demand| demand.origin)
+        .max()
+        .map_or(0, |origin| origin + 1)
+}
+
 fn network_flows_from_edges_and_od_flows(edges: &[Edge], od_flows: &[OdFlow]) -> Vec<EdgeFlow> {
     let edge_flow_capacity = max_edge_id(edges, od_flows).map_or(0, |edge_id| edge_id + 1);
     let flow_by_edge = flow_by_edge(od_flows, edge_flow_capacity);
@@ -660,7 +738,7 @@ fn edge_flows_from_edges(edges: &[Edge]) -> Vec<EdgeFlow> {
 fn edges_with_flows_removed_from_affected_paths(
     edges: &[Edge],
     current_edge_flows: &[f64],
-    affected_flows: &[AffectedFlow],
+    affected_flows: &[OdFlow],
 ) -> Vec<Edge> {
     let edge_flow_capacity = max_edge_id_in_paths(
         edges,
@@ -668,7 +746,7 @@ fn edges_with_flows_removed_from_affected_paths(
     )
     .map_or(0, |edge_id| edge_id + 1)
     .max(current_edge_flows.len());
-    let affected_by_edge = flow_by_edge_affected(affected_flows, edge_flow_capacity);
+    let affected_by_edge = flow_by_edge(affected_flows, edge_flow_capacity);
     let has_existing_edge_loads = edges.iter().any(|edge| edge.flow.abs() > CAPACITY_EPSILON);
 
     edges
@@ -699,19 +777,7 @@ fn flow_by_edge(od_flows: &[OdFlow], edge_count: usize) -> Vec<f64> {
     edge_flows
 }
 
-fn flow_by_edge_affected(affected_flows: &[AffectedFlow], edge_count: usize) -> Vec<f64> {
-    let mut edge_flows = vec![0.0; edge_count];
-    for flow in affected_flows {
-        for edge_id in &flow.edge_path {
-            if let Some(edge_flow) = edge_flows.get_mut(*edge_id) {
-                *edge_flow += flow.flow;
-            }
-        }
-    }
-    edge_flows
-}
-
-fn demands_from_affected_flows(affected_flows: &[AffectedFlow]) -> Vec<Demand> {
+fn demands_from_affected_flows(affected_flows: &[OdFlow]) -> Vec<Demand> {
     let mut demands = Vec::with_capacity(affected_flows.len());
     for flow in affected_flows {
         demands.push(Demand {
