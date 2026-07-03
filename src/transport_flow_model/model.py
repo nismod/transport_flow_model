@@ -208,27 +208,26 @@ class Network(_TabularData):
         normalized = _normalize(self._data, od_data)
         if normalized is None:
             return None
-        network_input, od_input, node_id_map, edge_id_map, edge_value_to_id = normalized
 
         result = core.allocate(
-            network_input,
-            od_input,
+            normalized.network_input,
+            normalized.od_input,
             capacity_constrained=capacity_constrained,
             directed=directed,
         )
         od_flows = _od_flows_to_dataframe(
             result["od_flows"].to_pandas(),
-            node_id_map=node_id_map,
-            edge_id_map=edge_id_map,
+            node_id_map=normalized.node_id_map,
+            edge_id_map=normalized.edge_id_map,
         )
         unassigned_od = _od_to_dataframe(
             result["unassigned_od"].to_pandas(),
-            node_id_map=node_id_map,
+            node_id_map=normalized.node_id_map,
         )
         network_flows = _network_flows_from_result(
             self._data,
             result["network_flows"].to_pandas(),
-            edge_value_to_id=edge_value_to_id,
+            edge_value_to_id=normalized.edge_value_to_id,
         )
 
         return AllocationResult(
@@ -250,9 +249,8 @@ class Network(_TabularData):
         normalized = _normalize(self._data, od_flow_data)
         if normalized is None:
             return None
-        network_input, od_flows_input, node_id_map, edge_id_map, edge_value_to_id = (
-            normalized
-        )
+        od_flows_input = normalized.od_input
+        edge_value_to_id = normalized.edge_value_to_id
         try:
             od_flows_input["edge_path"] = od_flows_input["edge_path"].map(
                 lambda path: [edge_value_to_id[edge_id] for edge_id in path]
@@ -266,7 +264,7 @@ class Network(_TabularData):
             return None
 
         result = core.disrupt(
-            network_input,
+            normalized.network_input,
             od_flows_input,
             failed_edge_ids,
             capacity_constrained=capacity_constrained,
@@ -274,16 +272,16 @@ class Network(_TabularData):
         )
         rerouted_flows = _od_flows_to_dataframe(
             result["rerouted_flows"].to_pandas(),
-            node_id_map=node_id_map,
-            edge_id_map=edge_id_map,
+            node_id_map=normalized.node_id_map,
+            edge_id_map=normalized.edge_id_map,
         )
         isolated_od = _od_to_dataframe(
             result["isolated_od"].to_pandas(),
-            node_id_map=node_id_map,
+            node_id_map=normalized.node_id_map,
         )
         losses = _losses_to_dataframe(
             result["losses"].to_pandas(),
-            node_id_map=node_id_map,
+            node_id_map=normalized.node_id_map,
         )
         network_flows = _network_flows_from_result(
             self._data,
@@ -340,19 +338,19 @@ class NetworkFlows(_TabularData):
         return cls(_coerce_integral_numeric_columns(network_data))
 
 
+@dataclass
+class NormalizedInputs:
+    network_input: pd.DataFrame
+    od_input: pd.DataFrame
+    node_id_map: list[object]
+    edge_id_map: list[object]
+    edge_value_to_id: dict[object, int]
+
+
 def _normalize(
     network_data: pd.DataFrame,
     flow_data: pd.DataFrame,
-) -> (
-    tuple[
-        pd.DataFrame,
-        pd.DataFrame,
-        list[object],
-        list[object],
-        dict[object, int],
-    ]
-    | None
-):
+) -> NormalizedInputs | None:
     node_value_to_id, node_id_map = _indexed_id_map(
         network_data["edge_from"],
         network_data["edge_to"],
@@ -372,7 +370,13 @@ def _normalize(
     flow_input["origin_id"] = flow_input["origin_id"].map(node_value_to_id)
     flow_input["destination_id"] = flow_input["destination_id"].map(node_value_to_id)
 
-    return network_input, flow_input, node_id_map, edge_id_map, edge_value_to_id
+    return NormalizedInputs(
+        network_input=network_input,
+        od_input=flow_input,
+        node_id_map=node_id_map,
+        edge_id_map=edge_id_map,
+        edge_value_to_id=edge_value_to_id,
+    )
 
 
 def _indexed_id_map(
