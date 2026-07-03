@@ -183,30 +183,17 @@ class Network(_TabularData):
     ) -> AllocationResult:
         """Allocate OD flows to least-cost paths on this network."""
 
-        od_data = od.to_dataframe(copy=False)
-        normalized = _normalize(self._data, od_data)
-        if normalized is None:
-            return None
-
         result = core.allocate(
-            normalized.network_input,
-            normalized.od_input,
+            self._data,
+            od.to_dataframe(copy=False),
             capacity_constrained=capacity_constrained,
             directed=directed,
         )
-        od_flows = _od_flows_to_dataframe(
-            result["od_flows"].to_pandas(),
-            node_id_map=normalized.node_id_map,
-            edge_id_map=normalized.edge_id_map,
-        )
-        unassigned_od = _od_to_dataframe(
-            result["unassigned_od"].to_pandas(),
-            node_id_map=normalized.node_id_map,
-        )
+        od_flows = _od_flows_to_dataframe(result["od_flows"].to_pandas())
+        unassigned_od = _od_to_dataframe(result["unassigned_od"].to_pandas())
         network_flows = _network_flows_from_result(
             self._data,
             result["network_flows"].to_pandas(),
-            edge_value_to_id=normalized.edge_value_to_id,
         )
 
         return AllocationResult(
@@ -218,54 +205,25 @@ class Network(_TabularData):
     def disrupt(
         self,
         od_flows: ODFlows,
-        failed_edges: list[str],
+        failed_edges: list[object],
         *,
         capacity_constrained: bool = True,
         directed: bool = True,
     ) -> DisruptionResult:
         """Reroute flows whose existing paths include any failed edge."""
-        od_flow_data = od_flows.to_dataframe(copy=False)
-        normalized = _normalize(self._data, od_flow_data)
-        if normalized is None:
-            return None
-        od_flows_input = normalized.od_input
-        edge_value_to_id = normalized.edge_value_to_id
-        try:
-            od_flows_input["edge_path"] = od_flows_input["edge_path"].map(
-                lambda path: [edge_value_to_id[edge_id] for edge_id in path]
-            )
-            failed_edge_ids = [
-                edge_value_to_id[edge_id]
-                for edge_id in failed_edges
-                if edge_id in edge_value_to_id
-            ]
-        except TypeError:
-            return None
-
         result = core.disrupt(
-            normalized.network_input,
-            od_flows_input,
-            failed_edge_ids,
+            self._data,
+            od_flows.to_dataframe(copy=False),
+            failed_edges,
             capacity_constrained=capacity_constrained,
             directed=directed,
         )
-        rerouted_flows = _od_flows_to_dataframe(
-            result["rerouted_flows"].to_pandas(),
-            node_id_map=normalized.node_id_map,
-            edge_id_map=normalized.edge_id_map,
-        )
-        isolated_od = _od_to_dataframe(
-            result["isolated_od"].to_pandas(),
-            node_id_map=normalized.node_id_map,
-        )
-        losses = _losses_to_dataframe(
-            result["losses"].to_pandas(),
-            node_id_map=normalized.node_id_map,
-        )
+        rerouted_flows = _od_flows_to_dataframe(result["rerouted_flows"].to_pandas())
+        isolated_od = _od_to_dataframe(result["isolated_od"].to_pandas())
+        losses = _losses_to_dataframe(result["losses"].to_pandas())
         network_flows = _network_flows_from_result(
             self._data,
             result["network_flows"].to_pandas(),
-            edge_value_to_id=edge_value_to_id,
         )
 
         return DisruptionResult(
@@ -346,140 +304,29 @@ def compute_losses(initial: ODFlows, disrupted: ODFlows) -> OD:
     return OD(_coerce_integral_numeric_columns(losses))
 
 
-@dataclass
-class NormalizedInputs:
-    network_input: pd.DataFrame
-    od_input: pd.DataFrame
-    node_id_map: list[object]
-    edge_id_map: list[object]
-    edge_value_to_id: dict[object, int]
-
-
-def _normalize(
-    network_data: pd.DataFrame,
-    flow_data: pd.DataFrame,
-) -> NormalizedInputs | None:
-    node_value_to_id, node_id_map = _indexed_id_map(
-        network_data["edge_from"],
-        network_data["edge_to"],
-        flow_data["origin_id"],
-        flow_data["destination_id"],
-    )
-    edge_value_to_id, edge_id_map = _unique_indexed_id_map(network_data["edge_id"])
-    if node_value_to_id is None or edge_value_to_id is None:
-        return None
-
-    network_input = network_data.copy()
-    network_input["edge_from"] = network_input["edge_from"].map(node_value_to_id)
-    network_input["edge_to"] = network_input["edge_to"].map(node_value_to_id)
-    network_input["edge_id"] = network_input["edge_id"].map(edge_value_to_id)
-
-    flow_input = flow_data.copy()
-    flow_input["origin_id"] = flow_input["origin_id"].map(node_value_to_id)
-    flow_input["destination_id"] = flow_input["destination_id"].map(node_value_to_id)
-
-    return NormalizedInputs(
-        network_input=network_input,
-        od_input=flow_input,
-        node_id_map=node_id_map,
-        edge_id_map=edge_id_map,
-        edge_value_to_id=edge_value_to_id,
-    )
-
-
-def _indexed_id_map(
-    *columns: pd.Series,
-) -> tuple[dict[object, int] | None, list[object] | None]:
-    value_to_id = {}
-    id_to_value = []
-    for column in columns:
-        for value in column:
-            try:
-                if value in value_to_id:
-                    continue
-                value_to_id[value] = len(id_to_value)
-            except TypeError:
-                return None, None
-            id_to_value.append(value)
-    return value_to_id, id_to_value
-
-
-def _unique_indexed_id_map(
-    column: pd.Series,
-) -> tuple[dict[object, int] | None, list[object] | None]:
-    try:
-        _, uniques = pd.factorize(column, sort=False, use_na_sentinel=False)
-    except TypeError:
-        return None, None
-
-    if len(uniques) != len(column):
-        return None, None
-
-    id_to_value = uniques.tolist()
-    value_to_id = {value: index for index, value in enumerate(id_to_value)}
-    return value_to_id, id_to_value
-
-
-def _od_flows_to_dataframe(
-    data: pd.DataFrame,
-    *,
-    node_id_map: list[object],
-    edge_id_map: list[object],
-) -> pd.DataFrame:
+def _od_flows_to_dataframe(data: pd.DataFrame) -> pd.DataFrame:
     data = data.loc[:, list(OD_FLOW_COLUMNS)].copy()
-    data["origin_id"] = data["origin_id"].map(lambda value: node_id_map[int(value)])
-    data["destination_id"] = data["destination_id"].map(
-        lambda value: node_id_map[int(value)]
-    )
-    data["edge_path"] = data["edge_path"].map(
-        lambda path: [edge_id_map[int(edge_id)] for edge_id in path]
-    )
+    data["edge_path"] = data["edge_path"].map(list)
     return _coerce_integral_numeric_columns(data)
 
 
-def _od_to_dataframe(
-    data: pd.DataFrame,
-    *,
-    node_id_map: list[object],
-) -> pd.DataFrame:
+def _od_to_dataframe(data: pd.DataFrame) -> pd.DataFrame:
     data = data.loc[:, list(FLOW_COLUMNS)].copy()
-    data["origin_id"] = data["origin_id"].map(lambda value: node_id_map[int(value)])
-    data["destination_id"] = data["destination_id"].map(
-        lambda value: node_id_map[int(value)]
-    )
     return _coerce_integral_numeric_columns(data)
 
 
-def _losses_to_dataframe(
-    data: pd.DataFrame,
-    *,
-    node_id_map: list[object],
-) -> pd.DataFrame:
+def _losses_to_dataframe(data: pd.DataFrame) -> pd.DataFrame:
     data = data.loc[:, list(LOSS_COLUMNS)].copy()
-    data["origin_id"] = data["origin_id"].map(lambda value: node_id_map[int(value)])
-    data["destination_id"] = data["destination_id"].map(
-        lambda value: node_id_map[int(value)]
-    )
     return _coerce_integral_numeric_columns(data)
 
 
 def _network_flows_from_result(
     network_data: pd.DataFrame,
     network_flows: pd.DataFrame,
-    *,
-    edge_value_to_id: dict[object, int],
 ) -> pd.DataFrame:
-    flow_by_edge = dict(
-        zip(
-            network_flows["edge_id"].map(int),
-            network_flows["flow"],
-            strict=False,
-        )
-    )
+    flow_by_edge = dict(zip(network_flows["edge_id"], network_flows["flow"], strict=False))
     data = network_data.copy()
-    data["flow"] = data["edge_id"].map(
-        lambda edge_id: flow_by_edge.get(edge_value_to_id[edge_id], 0)
-    )
+    data["flow"] = data["edge_id"].map(lambda edge_id: flow_by_edge.get(edge_id, 0))
     return _coerce_integral_numeric_columns(data)
 
 

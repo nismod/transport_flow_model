@@ -18,11 +18,17 @@ fn allocate_ffi<'py>(
     capacity_constrained: bool,
     directed: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let network = arrow_ffi::read_network_ffi(network).map_err(PyValueError::new_err)?;
-    let demands = arrow_ffi::read_demands_ffi(od).map_err(PyValueError::new_err)?;
-    let output = core::allocate(&network, &demands, capacity_constrained, directed);
+    let mut network = arrow_ffi::prepare_network_ffi(network).map_err(PyValueError::new_err)?;
+    let demands =
+        arrow_ffi::prepare_demands_ffi(od, &mut network).map_err(PyValueError::new_err)?;
+    let output = core::allocate(
+        &network.edges,
+        &demands.demands,
+        capacity_constrained,
+        directed,
+    );
     let (od_flows, network_flows, unassigned_od) =
-        arrow_ffi::allocation_to_ffi(py, &output).map_err(PyValueError::new_err)?;
+        arrow_ffi::allocation_to_ffi(py, &output, &network).map_err(PyValueError::new_err)?;
 
     let result = PyDict::new(py);
     result.set_item("od_flows", od_flows)?;
@@ -36,30 +42,24 @@ fn disrupt_ffi<'py>(
     py: Python<'py>,
     network: &Bound<'py, PyAny>,
     od_flows: &Bound<'py, PyAny>,
-    failed_edges: Vec<usize>,
+    failed_edges: &Bound<'py, PyAny>,
     capacity_constrained: bool,
     directed: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let network = arrow_ffi::read_network_ffi(network).map_err(PyValueError::new_err)?;
-    let network_edge_capacity = network
-        .iter()
-        .map(|edge| edge.id)
-        .max()
-        .map_or(0, |edge_id| edge_id + 1);
-    let disruption_inputs =
-        arrow_ffi::read_disruption_inputs_ffi(od_flows, &failed_edges, network_edge_capacity)
-            .map_err(PyValueError::new_err)?;
+    let mut network = arrow_ffi::prepare_network_ffi(network).map_err(PyValueError::new_err)?;
+    let od_flows = arrow_ffi::prepare_od_flows_ffi(od_flows, failed_edges, &mut network)
+        .map_err(PyValueError::new_err)?;
     let output = core::disrupt_with_preprocessed(
-        &network,
-        &disruption_inputs.affected_flows,
-        &disruption_inputs.current_edge_flows,
-        &disruption_inputs.initial_costs_by_od,
-        &failed_edges,
+        &network.edges,
+        &od_flows.inputs.affected_flows,
+        &od_flows.inputs.current_edge_flows,
+        &od_flows.inputs.initial_costs_by_od,
+        &od_flows.failed_edges,
         capacity_constrained,
         directed,
     );
     let (rerouted_flows, network_flows, isolated_od, losses) =
-        arrow_ffi::disruption_to_ffi(py, &output).map_err(PyValueError::new_err)?;
+        arrow_ffi::disruption_to_ffi(py, &output, &network).map_err(PyValueError::new_err)?;
 
     let result = PyDict::new(py);
     result.set_item("rerouted_flows", rerouted_flows)?;

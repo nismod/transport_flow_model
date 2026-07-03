@@ -34,7 +34,7 @@ def allocate(
 def disrupt(
     network: pa.Table | pa.RecordBatch | pd.DataFrame,
     od_flows: pa.Table | pa.RecordBatch | pd.DataFrame,
-    failed_edges: list[int],
+    failed_edges: list[object],
     *,
     capacity_constrained: bool = True,
     directed: bool = True,
