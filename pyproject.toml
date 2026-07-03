@@ -18,7 +18,7 @@ dev = [
     "osmnx>=2.0.0,<3",
     "py-spy>=0.4.2,<0.5",
     "maturin>=1.9,<2"
-]
+, "pyinstrument>=5.1.2,<6"]
 doc = ["sphinx", "pydata-sphinx-theme"]
 
 [build-system]
