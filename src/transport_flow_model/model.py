@@ -47,15 +47,6 @@ def _coerce_integral_numeric_columns(data: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-def _dataframe_delegate(instance, name):
-    data = instance.__dict__.get("_data")
-    if data is not None and hasattr(data, name):
-        return getattr(data, name)
-    raise AttributeError(
-        f"{instance.__class__.__name__!r} object has no attribute {name!r}"
-    )
-
-
 @dataclass
 class AllocationResult:
     od_flows: ODFlows
@@ -71,7 +62,83 @@ class DisruptionResult:
     losses: OD
 
 
-class OD:
+def _validate_column_map(
+    column_map: dict[str, str], required_columns: tuple[str, ...]
+) -> None:
+    """Raise if column_map doesn't provide all required target column names."""
+    missing = [c for c in required_columns if c not in column_map.values()]
+    if missing:
+        raise ValueError(
+            "column_map must include mappings for required columns " f"{missing}"
+        )
+
+
+class _TabularData:
+    """Base class for tabular data wrappers with column validation and I/O."""
+
+    REQUIRED_COLUMNS: tuple[str, ...] = ()
+
+    def __init__(self, data: pd.DataFrame):
+        missing = [c for c in self.REQUIRED_COLUMNS if c not in data.columns]
+        if missing:
+            raise ValueError(
+                f"Missing required columns for {self.__class__.__name__}: {missing}"
+            )
+        self._data = data
+
+    def to_dataframe(self, copy=True) -> pd.DataFrame:
+        """Return the tabular data as a pandas DataFrame."""
+        return self._data.copy() if copy else self._data
+
+    def to_csv(self, path: str | Path, index=False):
+        """Write data to CSV."""
+        self._data.to_csv(path, index=index)
+
+    def to_parquet(self, path: str | Path, index=False):
+        """Write data to Parquet format."""
+        self._data.to_parquet(path, index=index)
+
+    def to_file(self, path: str | Path, layer=None, **kwargs):
+        """Write data to a file using geopandas (GeoJSON, Shapefile, etc.)."""
+        gpd.GeoDataFrame(self._data).to_file(path, layer=layer, **kwargs)
+
+    @classmethod
+    def from_csv(cls, path: str | Path, column_map: dict[str, str]):
+        """Load a CSV and rename source columns to this class' schema."""
+        _validate_column_map(column_map, cls.REQUIRED_COLUMNS)
+        try:
+            data = pd.read_csv(path, usecols=list(column_map))
+        except ValueError as e:
+            msg = e.args[0].replace(
+                "Usecols do not match columns, columns expected but not found: ", ""
+            )
+            raise ValueError(f"Missing expected columns: {msg}") from e
+        return cls(data.rename(columns=column_map))
+
+    @classmethod
+    def from_file(cls, path: str | Path, column_map: dict[str, str], layer=None):
+        """Load a file (GeoJSON, Shapefile, etc.) and rename source columns to this class' schema."""
+        _validate_column_map(column_map, cls.REQUIRED_COLUMNS)
+        data = gpd.read_file(path, layer=layer, columns=list(column_map))
+        if "geometry" in data.columns:
+            data = data.drop(columns=["geometry"])
+        return cls(pd.DataFrame(data).rename(columns=column_map))
+
+    @classmethod
+    def from_parquet(cls, path: str | Path, column_map: dict[str, str]):
+        """Load a Parquet file and rename source columns to this class' schema."""
+        _validate_column_map(column_map, cls.REQUIRED_COLUMNS)
+        try:
+            data = pd.read_parquet(path, columns=list(column_map))
+        except ValueError as e:
+            msg = e.args[0].replace(
+                "Usecols do not match columns, columns expected but not found: ", ""
+            )
+            raise ValueError(f"Missing expected columns: {msg}") from e
+        return cls(data.rename(columns=column_map))
+
+
+class OD(_TabularData):
     """Origin-destination flows.
 
     - sparse matrix representation
@@ -81,114 +148,10 @@ class OD:
 
     REQUIRED_COLUMNS = ("origin_id", "destination_id", "flow")
 
-    def __init__(self, data: pd.DataFrame):
-        missing = [c for c in self.REQUIRED_COLUMNS if c not in data.columns]
-        if missing:
-            raise ValueError(
-                f"Missing required columns for {self.__class__.__name__}: {missing}"
-            )
-        self._data = data.copy()
-
-    def __getattr__(self, name):
-        return _dataframe_delegate(self, name)
-
     @property
     def data(self) -> pd.DataFrame:
         """Return a defensive copy of the normalized tabular data."""
         return self._data.copy()
-
-    def to_dataframe(self, copy=True) -> pd.DataFrame:
-        """Return the normalized tabular data."""
-        if copy:
-            return self._data.copy()
-        else:
-            return self._data
-
-    @classmethod
-    def from_csv(cls, path: str | Path, column_map: dict[str, str]) -> OD:
-        """Load a CSV and rename source columns to this class' schema."""
-        target_columns = set(column_map.values())
-        to_rename = set(column_map.keys())
-        missing_columns = [
-            col for col in cls.REQUIRED_COLUMNS if col not in target_columns
-        ]
-        if missing_columns:
-            raise ValueError(
-                "column_map must include mappings for required columns "
-                f"{missing_columns}"
-            )
-
-        try:
-            data = pd.read_csv(path, usecols=to_rename)
-        except ValueError as e:
-            msg = e.args[0].replace(
-                "Usecols do not match columns, columns expected but not found: ", ""
-            )
-            raise ValueError(f"Missing expected columns: {msg}") from e
-        data = data.rename(columns=column_map)
-
-        return cls(data)
-
-    @classmethod
-    def from_file(cls, path: str | Path, column_map: dict[str, str], layer=None) -> OD:
-        """Load a file (GeoJSON, Shapefile, etc.) and rename source columns to this class' schema."""
-        target_columns = set(column_map.values())
-        to_rename = set(column_map.keys())
-        missing_columns = [
-            col for col in cls.REQUIRED_COLUMNS if col not in target_columns
-        ]
-        if missing_columns:
-            raise ValueError(
-                "column_map must include mappings for required columns "
-                f"{missing_columns}"
-            )
-
-        data = gpd.read_file(path, layer=layer, usecols=to_rename)
-        # Drop geometry column if present (for non-spatial data)
-        if "geometry" in data.columns:
-            data = data.drop(columns=["geometry"])
-        data = data.rename(columns=column_map)
-        data = pd.DataFrame(data)  # Convert from GeoDataFrame to DataFrame
-
-        return cls(data)
-
-    @classmethod
-    def from_parquet(cls, path: str | Path, column_map: dict[str, str]) -> OD:
-        """Load a Parquet file and rename source columns to this class' schema."""
-        target_columns = set(column_map.values())
-        to_rename = set(column_map.keys())
-        missing_columns = [
-            col for col in cls.REQUIRED_COLUMNS if col not in target_columns
-        ]
-        if missing_columns:
-            raise ValueError(
-                "column_map must include mappings for required columns "
-                f"{missing_columns}"
-            )
-
-        try:
-            data = pd.read_parquet(path, columns=list(to_rename))
-        except ValueError as e:
-            msg = e.args[0].replace(
-                "Usecols do not match columns, columns expected but not found: ", ""
-            )
-            raise ValueError(f"Missing expected columns: {msg}") from e
-        data = data.rename(columns=column_map)
-
-        return cls(data)
-
-    def to_csv(self, path: str | Path, index=False):
-        """Write OD data to CSV."""
-        self._data.to_csv(path, index=index)
-
-    def to_parquet(self, path: str | Path, index=False):
-        """Write OD data to Parquet format."""
-        self._data.to_parquet(path, index=index)
-
-    def to_file(self, path: str | Path, layer=None, **kwargs):
-        """Write OD data to a file using geopandas (GeoJSON, Shapefile, etc.)."""
-        gdf = gpd.GeoDataFrame(self._data)
-        gdf.to_file(path, layer=layer, **kwargs)
 
     @classmethod
     def losses_from_flows(cls, initial: ODFlows, disrupted: ODFlows) -> OD:
@@ -222,7 +185,7 @@ class OD:
         return cls(_coerce_integral_numeric_columns(losses))
 
 
-class Network:
+class Network(_TabularData):
     """Base network model class.
 
     - graph representation
@@ -231,106 +194,6 @@ class Network:
 
     REQUIRED_COLUMNS = ("edge_from", "edge_to", "edge_id")
     OPTIONAL_COLUMNS = ("capacity", "cost", "flow")
-
-    def __init__(self, data: pd.DataFrame):
-        missing = [c for c in self.REQUIRED_COLUMNS if c not in data.columns]
-        if missing:
-            raise ValueError(
-                f"Missing required columns for {self.__class__.__name__}: {missing}"
-            )
-        self._data = data.copy()
-
-    def __getattr__(self, name):
-        return _dataframe_delegate(self, name)
-
-    def to_dataframe(self, copy=False) -> pd.DataFrame:
-        """Return the normalized tabular data."""
-        if copy:
-            return self._data.copy()
-        else:
-            return self._data
-
-    def to_csv(self, path: str | Path, index=False):
-        """Write network data to CSV."""
-        self._data.to_csv(path, index=index)
-
-    def to_parquet(self, path: str | Path, index=False):
-        """Write network data to Parquet format."""
-        self._data.to_parquet(path, index=index)
-
-    def to_file(self, path: str | Path, layer=None, **kwargs):
-        """Write network data to a file using geopandas (GeoJSON, Shapefile, etc.)."""
-        gdf = gpd.GeoDataFrame(self._data)
-        gdf.to_file(path, layer=layer, **kwargs)
-
-    @classmethod
-    def from_csv(cls, path: str | Path, column_map: dict[str, str]) -> Network:
-        """Load a CSV and rename source columns to this class' schema."""
-        target_columns = set(column_map.values())
-        to_rename = set(column_map.keys())
-        missing_columns = [
-            col for col in cls.REQUIRED_COLUMNS if col not in target_columns
-        ]
-        if missing_columns:
-            raise ValueError(
-                "column_map must include mappings for required columns "
-                f"{missing_columns}"
-            )
-
-        data = pd.read_csv(path, usecols=to_rename)
-        data = data.rename(columns=column_map)
-
-        return cls(data)
-
-    @classmethod
-    def from_file(
-        cls, path: str | Path, column_map: dict[str, str], layer=None
-    ) -> Network:
-        """Load a file (GeoJSON, Shapefile, etc.) and rename source columns to this class' schema."""
-        target_columns = set(column_map.values())
-        to_rename = set(column_map.keys())
-        missing_columns = [
-            col for col in cls.REQUIRED_COLUMNS if col not in target_columns
-        ]
-        if missing_columns:
-            raise ValueError(
-                "column_map must include mappings for required columns "
-                f"{missing_columns}"
-            )
-
-        data = gpd.read_file(path, layer=layer, usecols=to_rename)
-        # Drop geometry column if present (for non-spatial data)
-        if "geometry" in data.columns:
-            data = data.drop(columns=["geometry"])
-        data = data.rename(columns=column_map)
-        data = pd.DataFrame(data)  # Convert from GeoDataFrame to DataFrame
-
-        return cls(data)
-
-    @classmethod
-    def from_parquet(cls, path: str | Path, column_map: dict[str, str]) -> Network:
-        """Load a Parquet file and rename source columns to this class' schema."""
-        target_columns = set(column_map.values())
-        to_rename = set(column_map.keys())
-        missing_columns = [
-            col for col in cls.REQUIRED_COLUMNS if col not in target_columns
-        ]
-        if missing_columns:
-            raise ValueError(
-                "column_map must include mappings for required columns "
-                f"{missing_columns}"
-            )
-
-        try:
-            data = pd.read_parquet(path, columns=list(to_rename))
-        except ValueError as e:
-            msg = e.args[0].replace(
-                "Usecols do not match columns, columns expected but not found: ", ""
-            )
-            raise ValueError(f"Missing expected columns: {msg}") from e
-        data = data.rename(columns=column_map)
-
-        return cls(data)
 
     def allocate(
         self,
@@ -341,9 +204,8 @@ class Network:
     ) -> AllocationResult:
         """Allocate OD flows to least-cost paths on this network."""
 
-        network_data = self.to_dataframe()
-        od_data = od.to_dataframe()
-        normalized = _normalize(network_data, od_data)
+        od_data = od.to_dataframe(copy=False)
+        normalized = _normalize(self._data, od_data)
         if normalized is None:
             return None
         network_input, od_input, node_id_map, edge_id_map, edge_value_to_id = normalized
@@ -364,7 +226,7 @@ class Network:
             node_id_map=node_id_map,
         )
         network_flows = _network_flows_from_result(
-            network_data,
+            self._data,
             result["network_flows"].to_pandas(),
             edge_value_to_id=edge_value_to_id,
         )
@@ -384,9 +246,8 @@ class Network:
         directed: bool = True,
     ) -> DisruptionResult:
         """Reroute flows whose existing paths include any failed edge."""
-        network_data = self.to_dataframe()
-        od_flow_data = od_flows.to_dataframe()
-        normalized = _normalize(network_data, od_flow_data)
+        od_flow_data = od_flows.to_dataframe(copy=False)
+        normalized = _normalize(self._data, od_flow_data)
         if normalized is None:
             return None
         network_input, od_flows_input, node_id_map, edge_id_map, edge_value_to_id = (
@@ -425,7 +286,7 @@ class Network:
             node_id_map=node_id_map,
         )
         network_flows = _network_flows_from_result(
-            network_data,
+            self._data,
             result["network_flows"].to_pandas(),
             edge_value_to_id=edge_value_to_id,
         )
@@ -438,7 +299,7 @@ class Network:
         )
 
 
-class ODFlows:
+class ODFlows(_TabularData):
     """Origin-destination flow paths
 
     - full path representation of allocated flows for each OD
@@ -448,39 +309,8 @@ class ODFlows:
 
     REQUIRED_COLUMNS = ("origin_id", "destination_id", "flow", "edge_path")
 
-    def __init__(self, data: pd.DataFrame):
-        missing = [c for c in self.REQUIRED_COLUMNS if c not in data.columns]
-        if missing:
-            raise ValueError(
-                f"Missing required columns for {self.__class__.__name__}: {missing}"
-            )
-        self._data = data.copy()
 
-    def __getattr__(self, name):
-        return _dataframe_delegate(self, name)
-
-    def to_dataframe(self, copy=True) -> pd.DataFrame:
-        """Return OD flow paths data."""
-        if copy:
-            return self._data.copy()
-        else:
-            return self._data
-
-    def to_csv(self, path: str | Path, index=False):
-        """Write OD flow paths to CSV."""
-        self._data.to_csv(path, index=index)
-
-    def to_parquet(self, path: str | Path, index=False):
-        """Write OD flow paths to Parquet format."""
-        self._data.to_parquet(path, index=index)
-
-    def to_file(self, path: str | Path, layer=None, **kwargs):
-        """Write OD flow paths to a file using geopandas (GeoJSON, Shapefile, etc.)."""
-        gdf = gpd.GeoDataFrame(self._data)
-        gdf.to_file(path, layer=layer, **kwargs)
-
-
-class NetworkFlows:
+class NetworkFlows(_TabularData):
     """Aggregate flows on network
 
     - could consider this as Network with calculated attributes
@@ -491,53 +321,23 @@ class NetworkFlows:
 
     REQUIRED_COLUMNS = ("edge_id", "flow")
 
-    def __init__(self, data: pd.DataFrame):
-        missing = [c for c in self.REQUIRED_COLUMNS if c not in data.columns]
-        if missing:
-            raise ValueError(
-                f"Missing required columns for {self.__class__.__name__}: {missing}"
-            )
-        self._data = data.copy()
-
-    def __getattr__(self, name):
-        return _dataframe_delegate(self, name)
-
-    def to_dataframe(self, copy=True) -> pd.DataFrame:
-        """Return aggregate network edge flows."""
-        if copy:
-            return self._data.copy()
-        else:
-            return self._data
-
     @classmethod
     def from_network_and_od_flows(
         cls,
         network: Network,
         od_flows: ODFlows,
     ) -> NetworkFlows:
-        network_data = network.to_dataframe()
+        network_data = network.to_dataframe(copy=False)
         if "flow" in network_data.columns:
             base_flows = pd.to_numeric(network_data["flow"], errors="coerce").fillna(0)
         else:
             base_flows = 0
         edge_flows = _flow_by_edge(od_flows)
+        network_data = network_data.copy()
         network_data["flow"] = base_flows + network_data["edge_id"].map(
             edge_flows
         ).fillna(0)
         return cls(_coerce_integral_numeric_columns(network_data))
-
-    def to_csv(self, path: str | Path, index=False):
-        """Write network flows to CSV."""
-        self._data.to_csv(path, index=index)
-
-    def to_parquet(self, path: str | Path, index=False):
-        """Write network flows to Parquet format."""
-        self._data.to_parquet(path, index=index)
-
-    def to_file(self, path: str | Path, layer=None, **kwargs):
-        """Write network flows to a file using geopandas (GeoJSON, Shapefile, etc.)."""
-        gdf = gpd.GeoDataFrame(self._data)
-        gdf.to_file(path, layer=layer, **kwargs)
 
 
 def _normalize(
