@@ -16,6 +16,9 @@ pyo3 = { version = "0.29.0", features = ["abi3-py310", "extension-module"] }
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bench)'] }
+
 [[bench]]
 name = "core"
 path = "core/benches/core.rs"

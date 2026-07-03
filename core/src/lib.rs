@@ -1,5 +1,4 @@
 pub mod arrow_ffi;
-pub mod arrow_ipc;
 pub mod core;
 
 use pyo3::exceptions::PyValueError;

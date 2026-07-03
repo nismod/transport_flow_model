@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::ptr::NonNull;
+use std::sync::Arc;
 
 use arrow::array::{
-    Array, Float32Array, Float64Array, Int32Array, Int64Array, LargeListArray, ListArray,
-    UInt32Array, UInt64Array,
+    Array, ArrayRef, Float32Array, Float64Array, Int32Array, Int64Array, LargeListArray, ListArray,
+    ListBuilder, UInt32Array, UInt64Array, UInt64Builder,
 };
+use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use arrow::record_batch::{RecordBatch, RecordBatchIterator};
@@ -14,11 +16,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyCapsuleMethods;
 use pyo3::types::{PyAny, PyCapsule};
 
-use crate::arrow_ipc;
-use crate::core::{AffectedFlow, AllocationOutput, DisruptionOutput};
+use crate::core::{AllocationOutput, Demand, DisruptionOutput, Edge, EdgeFlow, Loss, OdFlow};
 
 pub struct DisruptionInputs {
-    pub affected_flows: Vec<AffectedFlow>,
+    pub affected_flows: Vec<OdFlow>,
     pub current_edge_flows: Vec<f64>,
     pub initial_costs_by_od: Vec<(usize, usize, f64)>,
 }
@@ -85,12 +86,12 @@ fn batches_to_pyarrow_stream<'py>(
 
 pub fn read_network_ffi(table: &Bound<'_, PyAny>) -> Result<Vec<crate::core::Edge>, String> {
     let batches = read_batches_from_pyarrow_table(table)?;
-    arrow_ipc::read_network_batches(&batches)
+    read_network_batches(&batches)
 }
 
 pub fn read_demands_ffi(table: &Bound<'_, PyAny>) -> Result<Vec<crate::core::Demand>, String> {
     let batches = read_batches_from_pyarrow_table(table)?;
-    arrow_ipc::read_demands_batches(&batches)
+    read_demands_batches(&batches)
 }
 
 pub fn read_disruption_inputs_ffi(
@@ -106,7 +107,7 @@ pub fn allocation_to_ffi<'py>(
     py: Python<'py>,
     output: &AllocationOutput,
 ) -> Result<(Bound<'py, PyAny>, Bound<'py, PyAny>, Bound<'py, PyAny>), String> {
-    let (od_flows, network_flows, unassigned_od) = arrow_ipc::allocation_to_batches(output)?;
+    let (od_flows, network_flows, unassigned_od) = allocation_to_batches(output)?;
     Ok((
         batches_to_pyarrow_stream(py, vec![od_flows])?,
         batches_to_pyarrow_stream(py, vec![network_flows])?,
@@ -126,8 +127,7 @@ pub fn disruption_to_ffi<'py>(
     ),
     String,
 > {
-    let (rerouted_flows, network_flows, isolated_od, losses) =
-        arrow_ipc::disruption_to_batches(output)?;
+    let (rerouted_flows, network_flows, isolated_od, losses) = disruption_to_batches(output)?;
     Ok((
         batches_to_pyarrow_stream(py, vec![rerouted_flows])?,
         batches_to_pyarrow_stream(py, vec![network_flows])?,
@@ -186,11 +186,12 @@ fn read_disruption_inputs_batches(
                 *initial_costs_by_od
                     .entry((origin, destination))
                     .or_insert(0.0) += cost;
-                affected_flows.push(AffectedFlow {
+                affected_flows.push(OdFlow {
                     origin,
                     destination,
                     flow,
                     edge_path,
+                    cost,
                 });
             }
         }
@@ -304,4 +305,204 @@ fn edge_path_values(values: &dyn Array) -> Result<Vec<usize>, String> {
             .collect();
     }
     Err("edge_path list values must be integer ids".to_string())
+}
+
+pub fn read_network_batches(batches: &[RecordBatch]) -> Result<Vec<Edge>, String> {
+    let mut edges = Vec::new();
+    for batch in batches {
+        let from = required_column(batch, "edge_from")?;
+        let to = required_column(batch, "edge_to")?;
+        let id = required_column(batch, "edge_id")?;
+        for row in 0..batch.num_rows() {
+            edges.push(Edge {
+                from: integer_value(from.as_ref(), "edge_from", row)?,
+                to: integer_value(to.as_ref(), "edge_to", row)?,
+                id: integer_value(id.as_ref(), "edge_id", row)?,
+                cost: numeric_value_or_default(batch, "cost", row, 1.0)?,
+                capacity: optional_numeric_value(batch, "capacity", row)?,
+                flow: numeric_value_or_default(batch, "flow", row, 0.0)?,
+            });
+        }
+    }
+    Ok(edges)
+}
+
+pub fn read_demands_batches(batches: &[RecordBatch]) -> Result<Vec<Demand>, String> {
+    let mut demands = Vec::new();
+    for batch in batches {
+        let origins = required_column(batch, "origin_id")?;
+        let destinations = required_column(batch, "destination_id")?;
+        for row in 0..batch.num_rows() {
+            demands.push(Demand {
+                origin: integer_value(origins.as_ref(), "origin_id", row)?,
+                destination: integer_value(destinations.as_ref(), "destination_id", row)?,
+                flow: required_numeric_value(batch, "flow", row)?,
+            });
+        }
+    }
+    Ok(demands)
+}
+
+pub fn allocation_to_batches(
+    output: &AllocationOutput,
+) -> Result<(RecordBatch, RecordBatch, RecordBatch), String> {
+    Ok((
+        od_flows_batch(&output.od_flows)?,
+        network_flows_batch(&output.network_flows)?,
+        demands_batch(&output.unassigned_od)?,
+    ))
+}
+
+pub fn disruption_to_batches(
+    output: &DisruptionOutput,
+) -> Result<(RecordBatch, RecordBatch, RecordBatch, RecordBatch), String> {
+    Ok((
+        od_flows_batch(&output.rerouted_flows)?,
+        network_flows_batch(&output.network_flows)?,
+        demands_batch(&output.isolated_od)?,
+        losses_batch(&output.losses)?,
+    ))
+}
+
+fn required_numeric_value(batch: &RecordBatch, name: &str, row: usize) -> Result<f64, String> {
+    let array = batch
+        .column_by_name(name)
+        .ok_or_else(|| format!("missing required column {name}"))?;
+    numeric_value(array.as_ref(), name, row)
+}
+
+fn numeric_value_or_default(
+    batch: &RecordBatch,
+    name: &str,
+    row: usize,
+    default: f64,
+) -> Result<f64, String> {
+    let Some(array) = batch.column_by_name(name) else {
+        return Ok(default);
+    };
+    if array.is_null(row) {
+        return Ok(default);
+    }
+    numeric_value(array.as_ref(), name, row)
+}
+
+fn optional_numeric_value(
+    batch: &RecordBatch,
+    name: &str,
+    row: usize,
+) -> Result<Option<f64>, String> {
+    let Some(array) = batch.column_by_name(name) else {
+        return Ok(None);
+    };
+    if array.is_null(row) {
+        return Ok(None);
+    }
+    numeric_value(array.as_ref(), name, row).map(Some)
+}
+
+fn od_flows_batch(rows: &[OdFlow]) -> Result<RecordBatch, String> {
+    let mut path_builder = ListBuilder::new(UInt64Builder::new());
+    for row in rows {
+        for edge_id in &row.edge_path {
+            path_builder.values().append_value(*edge_id as u64);
+        }
+        path_builder.append(true);
+    }
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("origin_id", DataType::UInt64, false),
+        Field::new("destination_id", DataType::UInt64, false),
+        Field::new("flow", DataType::Float64, false),
+        Field::new(
+            "edge_path",
+            DataType::List(Arc::new(Field::new("item", DataType::UInt64, true))),
+            false,
+        ),
+        Field::new("cost", DataType::Float64, false),
+    ]));
+    RecordBatch::try_new(
+        schema,
+        vec![
+            integer_array(rows.iter().map(|row| row.origin)),
+            integer_array(rows.iter().map(|row| row.destination)),
+            float_array(rows.iter().map(|row| row.flow)),
+            Arc::new(path_builder.finish()) as ArrayRef,
+            float_array(rows.iter().map(|row| row.cost)),
+        ],
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn network_flows_batch(rows: &[EdgeFlow]) -> Result<RecordBatch, String> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("edge_id", DataType::UInt64, false),
+        Field::new("edge_from", DataType::UInt64, false),
+        Field::new("edge_to", DataType::UInt64, false),
+        Field::new("cost", DataType::Float64, false),
+        Field::new("capacity", DataType::Float64, true),
+        Field::new("flow", DataType::Float64, false),
+    ]));
+    RecordBatch::try_new(
+        schema,
+        vec![
+            integer_array(rows.iter().map(|row| row.edge_id)),
+            integer_array(rows.iter().map(|row| row.edge_from)),
+            integer_array(rows.iter().map(|row| row.edge_to)),
+            float_array(rows.iter().map(|row| row.cost)),
+            Arc::new(Float64Array::from(
+                rows.iter().map(|row| row.capacity).collect::<Vec<_>>(),
+            )) as ArrayRef,
+            float_array(rows.iter().map(|row| row.flow)),
+        ],
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn demands_batch(rows: &[Demand]) -> Result<RecordBatch, String> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("origin_id", DataType::UInt64, false),
+        Field::new("destination_id", DataType::UInt64, false),
+        Field::new("flow", DataType::Float64, false),
+    ]));
+    RecordBatch::try_new(
+        schema,
+        vec![
+            integer_array(rows.iter().map(|row| row.origin)),
+            integer_array(rows.iter().map(|row| row.destination)),
+            float_array(rows.iter().map(|row| row.flow)),
+        ],
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn losses_batch(rows: &[Loss]) -> Result<RecordBatch, String> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("origin_id", DataType::UInt64, false),
+        Field::new("destination_id", DataType::UInt64, false),
+        Field::new("flow", DataType::Float64, false),
+        Field::new("initial_cost", DataType::Float64, false),
+        Field::new("disrupted_cost", DataType::Float64, false),
+        Field::new("rerouting_loss", DataType::Float64, false),
+    ]));
+    RecordBatch::try_new(
+        schema,
+        vec![
+            integer_array(rows.iter().map(|row| row.origin)),
+            integer_array(rows.iter().map(|row| row.destination)),
+            float_array(rows.iter().map(|row| row.flow)),
+            float_array(rows.iter().map(|row| row.initial_cost)),
+            float_array(rows.iter().map(|row| row.disrupted_cost)),
+            float_array(rows.iter().map(|row| row.rerouting_loss)),
+        ],
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn float_array(values: impl Iterator<Item = f64>) -> ArrayRef {
+    Arc::new(Float64Array::from(values.collect::<Vec<_>>())) as ArrayRef
+}
+
+fn integer_array(values: impl Iterator<Item = usize>) -> ArrayRef {
+    Arc::new(UInt64Array::from(
+        values.map(|value| value as u64).collect::<Vec<_>>(),
+    )) as ArrayRef
 }
