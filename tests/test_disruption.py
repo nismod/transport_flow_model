@@ -55,7 +55,7 @@ def test_disruption_isolates_single_path_od_when_failed_edge_removes_access():
 
     assert result.rerouted_flows.to_dataframe().empty
     _assert_frame_equal_up_to_order(
-        result.isolated_od,
+        result.isolated_od.to_dataframe(),
         pd.DataFrame(
             {
                 "origin_id": ["A"],
@@ -95,7 +95,7 @@ def test_disruption_reroutes_failed_short_path_to_remaining_path_and_records_los
     result = network.disrupt(existing_flows, ["AB"], directed=True)
 
     _assert_frame_equal_up_to_order(
-        result.rerouted_flows,
+        result.rerouted_flows.to_dataframe(),
         pd.DataFrame(
             {
                 "origin_id": ["A"],
@@ -109,7 +109,7 @@ def test_disruption_reroutes_failed_short_path_to_remaining_path_and_records_los
     )
     assert result.isolated_od.to_dataframe().empty
     _assert_frame_equal_up_to_order(
-        result.losses,
+        result.losses.to_dataframe(),
         pd.DataFrame(
             {
                 "origin_id": ["A"],
