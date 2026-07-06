@@ -150,3 +150,12 @@ Dataset of traffic networks and assignment for 20 cities
 
 - https://doi.org/10.6084/m9.figshare.24235696
 - could use for performance benchmarking and validation/comparison of assignment methods
+
+# Versioning
+
+The package follows semantic versioning; the public API is the set of
+top-level `transport_flow_model` exports plus the JSON config schema and
+script CLIs. Breaking changes and deprecations are recorded in
+`CHANGELOG.md`, and the full policy (including result bit-stability across
+patch releases and the deprecation window) is documented in
+`docs/source/versioning.rst`.

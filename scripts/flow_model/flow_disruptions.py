@@ -1,151 +1,77 @@
 #!/usr/bin/env python
-# coding: utf-8
-"""Disruption model for rerouting and flow isolation analysis
+"""Disruption model for rerouting and flow isolation analysis.
 
-Run this after initial flow_allocation.py
+Driver over the transport_flow_model v0 API: reload the baseline
+assignment written by flow_allocation.py, evaluate link-removal scenarios
+with ``disrupt``, and aggregate losses per scenario.
+
+Run this after flow_allocation.py.
 """
 
 import argparse
 import json
-from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
 
-from transport_flow_model.model import Network, ODFlows
-from transport_flow_model.config import load_config
+from transport_flow_model import AssignmentResult, Network, RunConfig, disrupt
+
+# Loss columns kept for output compatibility: rerouting_cost is the cost of
+# carrying each rerouted flow on its new path; the attribute columns are
+# only non-zero if the baseline paths carry those attributes.
+RerouteLossColumns = ["rerouting_cost", "rerouting_length_m", "rerouting_time_hr"]
 
 
-def main(config):
-    processed_data_path = Path(config["paths"]["data"])
-    results_data_path = Path(config["paths"]["results"])
+def main(config: RunConfig):
+    results_path = config.paths.results / "flow_disruptions"
+    results_path.mkdir(parents=True, exist_ok=True)
+    flow_folder = config.paths.results / "flow_od_paths"
 
-    # Create a folder for the flow disruption outputs. Example name given here
-    disruption_results_path = results_data_path / "flow_disruptions"
-    disruption_results_path.mkdir(parents=True, exist_ok=True)
-
-    #
-    # OD Inputs
-    #
-    flow_folder = results_data_path / "flow_od_paths"
-
-    # Specify flow OD data path
-    od_flows_file = flow_folder / "od_flows.csv"
-
-    # Specify path of network dataframe with the pre-disruption flows
-    edge_flows_file = flow_folder / "network_edge_total_flows.csv"
-
-    # Specify the names of the important columns in the pre-disruption OD file
-    flow_column = "flow"  # Total tons column
-    edge_path_column = "edge_path"
-    cost_column = "cost"  # The cost criteria used in the OD assignment
-    distance_column = (
-        "length_m"  # Include this if there is interest in estimating new distance
-    )
-    time_column = "time_hr"  # Include this if there is interest in estimating new time
-    network_attribute_columns = [distance_column, time_column]
-    if network_attribute_columns is not None:
-        rerouting_loss_columns = [f"rerouting_{cost_column}"] + [
-            f"rerouting_{c}" for c in network_attribute_columns
-        ]
-    else:
-        rerouting_loss_columns = [f"rerouting_{cost_column}"]
-
-    # Load flow and network data
-    flow_df = pd.read_csv(od_flows_file)
-    network_df = pd.read_csv(edge_flows_file).rename(columns={"id": "edge_id"})
-
-    # Parse edge_path from JSON string representation
-    flow_df[edge_path_column] = flow_df[edge_path_column].map(
+    # Reload the baseline assignment (paths and link flows) from CSV
+    paths = pd.read_csv(flow_folder / "od_flows.csv")
+    paths["edge_path"] = paths["edge_path"].map(
         lambda s: json.loads(s.replace("'", '"'))
     )
-
-    # Create Network and ODFlows objects
-    network = Network(network_df)
-    od_flows = ODFlows(flow_df)
-
-    #
-    # Damage scenario inputs
-    #
-
-    # Get the set of damaged edges This comes from the exposure/vulnerability
-    # analysis where we assemble the unique set of failed edges Get the list of
-    # edges of the initiating sector to fail
-    failure_id_column = "edge_id"
-    damages_results_path = processed_data_path / "damages"
-    failure_edges = pd.read_csv(damages_results_path / "failure_set.csv")
-
-    #
-    # Process disruptions
-    #
-
-    # Start the failure simulations by looping over each failure scenario
-    ef_list = []
-    for row in failure_edges.itertuples():
-        fail_edges = getattr(row, failure_id_column)
-        # Convert to list if only single edge
-        if not isinstance(fail_edges, list):
-            fail_edges = [fail_edges]
-
-        # Check if there is pre-disruption flow on failed edges
-        if network_df[network_df["edge_id"].isin(fail_edges)][flow_column].sum() > 0:
-            # Run disruption analysis using Network.disrupt()
-            disruption_result = network.disrupt(
-                od_flows,
-                failed_edges=fail_edges,
-                capacity_constrained=True,
-                directed=True,
-            )
-
-            rerouted_flows = disruption_result.rerouted_flows.to_dataframe()
-            isolated_flows = disruption_result.isolated_od.to_dataframe()
-
-            # Calculate rerouting losses if flows were rerouted
-            if len(rerouted_flows) > 0:
-                # Store old costs for comparison
-                rerouted_flows[f"rerouting_{cost_column}"] = (
-                    (rerouted_flows[cost_column]) * rerouted_flows[flow_column]
-                )
-                # Calculate attribute losses if available
-                if network_attribute_columns is not None:
-                    for attr_l in network_attribute_columns:
-                        if attr_l in rerouted_flows.columns:
-                            rerouted_flows[f"rerouting_{attr_l}"] = rerouted_flows[
-                                attr_l
-                            ]
-            else:
-                for loss_column in rerouting_loss_columns:
-                    rerouted_flows[loss_column] = pd.Series(dtype=float)
-
-            # Initialize loss columns for isolated flows
-            for loss_column in rerouting_loss_columns:
-                isolated_flows[loss_column] = 0.0
-
-            # Tag with failure scenario
-            if len(fail_edges) == 1:
-                rerouted_flows[failure_id_column] = fail_edges[0]
-                isolated_flows[failure_id_column] = fail_edges[0]
-            else:
-                rerouted_flows[failure_id_column] = str(fail_edges)
-                isolated_flows[failure_id_column] = str(fail_edges)
-
-            ef_list.append(rerouted_flows)
-            ef_list.append(isolated_flows)
-
-    ef_list = pd.concat(ef_list, axis=0, ignore_index=True)
-    sum_columns = [flow_column] + rerouting_loss_columns
-    ef_list = (
-        ef_list.groupby(failure_id_column)
-        .agg(dict([(c, "sum") for c in sum_columns]))
-        .reset_index()
+    network = Network(pd.read_csv(flow_folder / "network_edge_total_flows.csv"))
+    base = AssignmentResult.from_tables(
+        link_flows=network.to_table(),
+        paths=pa.Table.from_pandas(paths, preserve_index=False),
     )
 
-    ef_list["total_flow_loss"] = (
-        ef_list[f"rerouting_{cost_column}"] + ef_list[flow_column]
+    results = disrupt(
+        network,
+        config.load_scenarios(),
+        base=base,
+        **config.assignment.options(),
     )
-    ef_list.to_csv(
-        disruption_results_path / "flow_disruption_losses.csv",
-        index=False,
+
+    losses = pd.concat(
+        [frame for result in results for frame in scenario_loss_frames(result)],
+        axis=0,
+        ignore_index=True,
     )
+    sum_columns = ["flow"] + RerouteLossColumns
+    losses = losses.groupby("edge_id").agg({c: "sum" for c in sum_columns})
+    losses = losses.reset_index()
+    losses["total_flow_loss"] = losses["rerouting_cost"] + losses["flow"]
+    losses.to_csv(results_path / "flow_disruption_losses.csv", index=False)
+
+
+def scenario_loss_frames(result) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Per-OD loss rows for one scenario: rerouted flows cost their new
+    path; isolated flows are counted as lost."""
+    rerouted = result.rerouted.to_pandas()
+    isolated = result.isolated.to_pandas().rename(columns={"value": "flow"})
+    if len(rerouted) > 0:
+        rerouted["rerouting_cost"] = rerouted["cost"] * rerouted["flow"]
+    else:
+        for column in RerouteLossColumns:
+            rerouted[column] = pd.Series(dtype=float)
+    for column in RerouteLossColumns:
+        isolated[column] = 0.0
+    rerouted["edge_id"] = result.scenario.id
+    isolated["edge_id"] = result.scenario.id
+    return rerouted, isolated
 
 
 if __name__ == "__main__":
@@ -155,5 +81,4 @@ if __name__ == "__main__":
     )
     parser.add_argument("config", help="Path to config.json")
     args = parser.parse_args()
-    CONFIG = load_config(args.config)
-    main(CONFIG)
+    main(RunConfig.from_json(args.config))

@@ -1,4 +1,4 @@
-# Data 
+# Data
 *.osm.pbf
 *.gpkg
 *.bak
@@ -34,6 +34,11 @@ target/
 
 # Docs
 docs/build
+
+# Notes
+SCRATCH
+REVIEW.md
+tmp.*
 
 # pixi environments
 .pixi/*

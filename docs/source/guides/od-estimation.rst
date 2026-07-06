@@ -210,12 +210,12 @@ outflows from each origin.
 2       2            1     1285.714286
 2       2            3     1285.714286
 
-To use with ``Network.allocate()``, rename columns to match OD requirements:
+To use with ``assign()``, rename columns to match ``Demand`` requirements:
 
 >>> od_data = flows[["origin", "destination", "estimated_flow"]].copy()
->>> od_data.columns = ["origin_id", "destination_id", "flow"]
->>> from transport_flow_model import OD
->>> od = OD(od_data)  # doctest: +SKIP
+>>> od_data.columns = ["origin_id", "destination_id", "value"]
+>>> from transport_flow_model import Demand
+>>> demand = Demand(od_data)  # doctest: +SKIP
 
 Travel-to-Work Example
 ----------------------
@@ -257,7 +257,7 @@ Here's a complete example generating a travel-to-work OD matrix:
 Integrating with Flow Allocation
 ---------------------------------
 
-After generating OD probabilities, you can use them with ``Network.allocate()``
+After generating OD probabilities, you can use them with ``assign()``
 to assign flows to actual paths:
 
 >>> # Generate synthetic OD with unit flows
@@ -269,16 +269,16 @@ to assign flows to actual paths:
 ...     distance_threshold=10.0,
 ... )
 >>>
->>> # Convert probabilities to OD object (with unit flows)
->>> from transport_flow_model import OD
+>>> # Convert probabilities to Demand (with unit flows)
+>>> from transport_flow_model import Demand, assign
 >>> od_data = od_probs.copy()
->>> od_data = od_data.rename(columns={"origin": "origin_id", "destination": "destination_id", "probability": "flow"})
->>> od_data["flow"] = od_data["flow"] * 1000  # Scale to realistic magnitude
->>> od = OD(od_data[["origin_id", "destination_id", "flow"]])
+>>> od_data = od_data.rename(columns={"origin": "origin_id", "destination": "destination_id", "probability": "value"})
+>>> od_data["value"] = od_data["value"] * 1000  # Scale to realistic magnitude
+>>> demand = Demand(od_data[["origin_id", "destination_id", "value"]])
 >>>
->>> # Allocate to network paths
->>> allocation = network.allocate(od, directed=True)  # doctest: +SKIP
->>> allocation.network_flows.to_dataframe()[["edge_id", "flow"]]  # doctest: +SKIP
+>>> # Assign to network paths (ids in demand must be network node ids)
+>>> result = assign(network, demand, "sequential", directed=True)  # doctest: +SKIP
+>>> result.link_flows.to_pandas()[["edge_id", "flow"]]  # doctest: +SKIP
 
 Advanced: Custom Column Names
 ------------------------------

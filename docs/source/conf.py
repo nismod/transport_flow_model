@@ -13,7 +13,21 @@ author = "Tom Russell, Raghav Pant, Yue Li, Alberto Fernández-Pérez"
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = ["sphinx.ext.doctest"]
+extensions = [
+    "sphinx.ext.autodoc",
+    "sphinx.ext.doctest",
+    "sphinx.ext.intersphinx",
+    "sphinx.ext.napoleon",
+]
+
+autodoc_member_order = "bysource"
+autodoc_typehints = "description"
+
+intersphinx_mapping = {
+    "pandas": ("https://pandas.pydata.org/docs", None),
+    "pyarrow": ("https://arrow.apache.org/docs", None),
+    "python": ("https://docs.python.org/3", None),
+}
 
 templates_path = ["_templates"]
 exclude_patterns = []

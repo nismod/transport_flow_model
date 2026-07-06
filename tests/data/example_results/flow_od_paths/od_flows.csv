@@ -1,0 +1,5 @@
+origin_id,destination_id,flow,edge_path,cost
+AA,BB,25,"['XX', 'YY']",30
+AA,CC,75,['XX'],20
+BB,DD,50,['ZZ'],5
+BB,DD,50,['AA'],50

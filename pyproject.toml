@@ -8,7 +8,7 @@ authors = [
     { name = "Tom Russell", email = "tom.russell@ouce.ox.ac.uk" },
 ]
 requires-python = ">=3.10"
-dependencies = ["igraph", "geopandas", "pandas", "pyarrow", "tqdm"]
+dependencies = ["igraph", "geopandas", "pandas", "pyarrow", "pydantic>=2", "tqdm"]
 
 [dependency-groups]
 dev = [

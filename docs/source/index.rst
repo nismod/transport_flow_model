@@ -15,6 +15,13 @@ Welcome to ``tfm``'s documentation!
 
 .. toctree::
    :maxdepth: 2
+   :caption: Reference
+
+   api
+   versioning
+
+.. toctree::
+   :maxdepth: 2
    :caption: Development
 
    development

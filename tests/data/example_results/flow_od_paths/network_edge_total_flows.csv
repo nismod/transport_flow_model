@@ -1,0 +1,5 @@
+edge_from,edge_to,edge_id,capacity,cost,length_m,time_hr,flow
+AA,CC,XX,100,20,100,2,100
+CC,BB,YY,100,10,50,1,25
+BB,DD,ZZ,50,5,20,1,50
+BB,DD,AA,100,50,200,10,50
