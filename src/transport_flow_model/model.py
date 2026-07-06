@@ -79,7 +79,7 @@ def _validate_column_map(
     missing = [c for c in required_columns if c not in column_map.values()]
     if missing:
         raise ValueError(
-            "column_map must include mappings for required columns " f"{missing}"
+            f"column_map must include mappings for required columns {missing}"
         )
 
 
@@ -324,7 +324,9 @@ def _network_flows_from_result(
     network_data: pd.DataFrame,
     network_flows: pd.DataFrame,
 ) -> pd.DataFrame:
-    flow_by_edge = dict(zip(network_flows["edge_id"], network_flows["flow"], strict=False))
+    flow_by_edge = dict(
+        zip(network_flows["edge_id"], network_flows["flow"], strict=False)
+    )
     data = network_data.copy()
     data["flow"] = data["edge_id"].map(lambda edge_id: flow_by_edge.get(edge_id, 0))
     return _coerce_integral_numeric_columns(data)
