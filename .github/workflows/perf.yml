@@ -1,0 +1,131 @@
+name: perf
+
+# Assignment performance benchmarks (relative gap, wall time, peak RSS).
+#
+# - perf: on every PR and push to main, runs the small (vendored) instances
+#   and fails on >20% median wall-time slowdown or relative-gap regression
+#   against the baseline recorded from the latest main build.
+# - perf-nightly: downloads and runs the large instances on a schedule,
+#   publishing the parquet results and gap-vs-time plots as artifacts.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  schedule:
+    - cron: "42 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  perf:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install package, dev dependencies and Rust extension
+        run: |
+          python -m venv .venv-ci
+          . .venv-ci/bin/activate
+          echo "$PWD/.venv-ci/bin" >> "$GITHUB_PATH"
+          pip install --group dev -e .
+          maturin develop --release
+
+      - name: Restore performance baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: .perf-baseline
+          key: perf-baseline-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            perf-baseline-${{ runner.os }}-
+
+      - name: Benchmark small instances
+        run: |
+          args=(--suite small --repeats 5 --output-dir benchmark_results/assignment)
+          if [ -f .perf-baseline/summary.json ]; then
+            args+=(--baseline .perf-baseline/summary.json)
+          else
+            echo "No cached baseline yet; recording this run without checking."
+          fi
+          python scripts/benchmark_assignment.py "${args[@]}"
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assignment-benchmark-${{ github.run_id }}
+          path: benchmark_results/assignment
+
+      - name: Refresh baseline from this run (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          mkdir -p .perf-baseline
+          cp benchmark_results/assignment/summary.json .perf-baseline/summary.json
+
+      - name: Save performance baseline (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: .perf-baseline
+          key: perf-baseline-${{ runner.os }}-${{ github.sha }}
+
+  perf-nightly:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install package, dev dependencies and Rust extension
+        run: |
+          python -m venv .venv-ci
+          . .venv-ci/bin/activate
+          echo "$PWD/.venv-ci/bin" >> "$GITHUB_PATH"
+          pip install --group dev -e .
+          maturin develop --release
+
+      - name: Cache benchmark datasets
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/transport-flow-model
+          key: tfm-datasets-v1
+
+      - name: Benchmark large instances
+        run: >
+          python scripts/benchmark_assignment.py
+          --suite large --repeats 3
+          --output-dir benchmark_results/assignment
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assignment-benchmark-nightly-${{ github.run_id }}
+          path: benchmark_results/assignment

@@ -23,8 +23,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install package and dev dependencies
-        run: pip install --group dev .
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install package, dev dependencies and Rust extension
+        run: |
+          python -m venv .venv-ci
+          . .venv-ci/bin/activate
+          echo "$PWD/.venv-ci/bin" >> "$GITHUB_PATH"
+          pip install --group dev -e .
+          maturin develop --release
 
       - name: Run lint checks
         run: ruff check

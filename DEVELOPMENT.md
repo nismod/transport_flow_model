@@ -22,6 +22,37 @@
   - refer to papers for methods motivation
   - import and use in current projects
 
+# Benchmarking and profiling
+
+Three layers, from micro to end-to-end:
+
+- `pixi run bench` — assignment benchmark harness
+  (`scripts/benchmark_assignment.py`): runs each (instance, method, threads)
+  case in a fresh subprocess and records instance, method, threads,
+  iterations, gap trajectory, wall time and peak RSS to parquet, plus a
+  markdown report and gap-vs-time plots, under
+  `benchmark_results/assignment/`. `--suite small` (vendored SiouxFalls) or
+  `--suite large` (downloaded TNTP instances); `--baseline`/`--write-baseline`
+  for regression checks.
+- `pixi run extension-bench` — Criterion micro-benchmarks of the Rust core
+  (`core/benches/core.rs`).
+- `pixi run profile-flow-scripts` — py-spy flamegraphs of the end-to-end flow
+  scripts; pyinstrument is also available in the dev environment for ad-hoc
+  profiling.
+
+Wall time for equilibrium methods is only meaningful together with solution
+quality, so every benchmark case records the *relative gap*
+(`transport_flow_model.relative_gap`): the excess of total travel time over
+total shortest-path travel time at congested costs. Boyce, Ralevic-Dekic &
+Bar-Gera (2004, doi:10.1061/(ASCE)0733-947X(2004)130:1(49)) recommend gaps
+of 1e-4 or better before flow differences between scenarios are trustworthy.
+
+CI (`.github/workflows/perf.yml`) benchmarks the small suite on every PR and
+push to main, failing on >20% median wall-time slowdown or on relative-gap
+regression at a fixed iteration budget against the baseline cached from the
+latest main build; a nightly job runs the large instances and uploads
+parquet results and plots as artifacts.
+
 # Software and Literature review (WIP)
 
 `spopt-r` spatial optimization algorithms for R

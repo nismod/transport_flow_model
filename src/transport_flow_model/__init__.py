@@ -7,6 +7,7 @@ the changelog and the versioning policy in the documentation.
 
 from .assignment import AssignmentResult, Provenance, assign
 from .config import RunConfig, load_config
+from .convergence import link_costs, relative_gap
 from .demand import Demand
 from .disruption import (
     DisruptionResults,
@@ -42,5 +43,7 @@ __all__ = [
     "datasets",
     "disrupt",
     "io",
+    "link_costs",
     "load_config",
+    "relative_gap",
 ]
