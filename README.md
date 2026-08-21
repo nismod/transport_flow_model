@@ -1,6 +1,7 @@
 # Transport Flow Model
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19566285.svg)](https://doi.org/10.5281/zenodo.19566285)
+[![docs](https://github.com/nismod/transport_flow_model/actions/workflows/docs.yml/badge.svg)]([https://github.com/nismod/transport_flow_model/actions/workflows/docs.yml](https://nismod.github.io/transport_flow_model)
 
 This Python package implements iterative capacity-constrained network flow
 allocation. It routes flows through networks sequentially until link capacities
