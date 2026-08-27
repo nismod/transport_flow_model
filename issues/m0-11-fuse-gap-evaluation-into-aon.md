@@ -51,3 +51,37 @@ conventions any new entry point must follow.
 - `src/transport_flow_model/convergence.py` — the per-origin loop.
 - `core/src/lib.rs` — `shortest_paths_from_ffi` and its `read_network_ffi` call.
 - `docs/adr/0002-arrow-tables-are-the-internal-interchange.md`.
+
+## Result: done, by batching rather than fusing
+
+Two changes, neither of them the fusion this issue proposed.
+
+**Columns are resolved once per record batch, not once per row.** The readers
+called `column_by_name` inside their row loops. Parsing a network got 1.6-1.8x
+faster.
+
+**`relative_gap` asks for every OD pair in one call.** `core.skim(network,
+od_pairs)` builds one shortest-path tree per distinct origin over a network
+parsed once, and returns a cost per pair. That removed the per-origin
+re-parsing *and* the per-origin Python bookkeeping (`pc.index_in`, `pc.take`,
+`to_numpy` per origin), which together were the whole cost.
+
+Measured with `scripts/profile_gap_cost.py`, median of 5 repeats:
+
+| instance | gap before | gap after | gap / AON before | after |
+| --- | --- | --- | --- | --- |
+| siouxfalls | 0.0051 s | 0.0005 s | 3.0x | 0.35x |
+| anaheim | 0.0219 s | 0.0020 s | 3.8x | 0.55x |
+| chicago-sketch | 0.4683 s | 0.0457 s | 2.9x | 0.40x |
+
+Evaluating the gap now costs a fraction of an all-or-nothing pass rather than
+three times one, so an iterative method can check convergence every iteration.
+
+Option 2 above — returning per-origin minimum-cost totals from `core.allocate`
+— was **not** implemented and is not needed. It assumed the AON pass was where
+the shared work lived; the measurement showed the cost was re-parsing, and a
+batched skim is a smaller interface that also serves `RadiationModel`.
+
+Option 1 was implemented in the more general form of `core.prepare(links)`, a
+handle holding the parsed network (see ADR-0002), which the disruption loop
+uses.

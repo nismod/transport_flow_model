@@ -445,6 +445,14 @@ pub fn prepare_od_flows_ffi(
     })
 }
 
+pub fn prepare_skim_pairs_ffi(
+    table: &Bound<'_, PyAny>,
+    network: &mut PreparedNetwork,
+) -> Result<Vec<(usize, usize)>, String> {
+    let batches = read_batches_from_pyarrow_table(table)?;
+    prepare_skim_pairs_batches(&batches, network)
+}
+
 pub fn allocation_to_ffi<'py>(
     py: Python<'py>,
     output: &AllocationOutput,
@@ -570,6 +578,30 @@ fn prepare_demands_batches(
         }
     }
     Ok(PreparedDemands { demands })
+}
+
+fn prepare_skim_pairs_batches(
+    batches: &[RecordBatch],
+    network: &mut PreparedNetwork,
+) -> Result<Vec<(usize, usize)>, String> {
+    let mut pairs = Vec::with_capacity(batches.iter().map(RecordBatch::num_rows).sum());
+    for batch in batches {
+        let origins = id_column(batch, "origin_id")?;
+        let destinations = id_column(batch, "destination_id")?;
+        ensure_compatible_id_kind("origin_id", network.node_kind, "edge_from", origins.kind())?;
+        ensure_compatible_id_kind(
+            "destination_id",
+            network.node_kind,
+            "edge_from",
+            destinations.kind(),
+        )?;
+        for row in 0..batch.num_rows() {
+            let origin = network.intern_node_id(origins.value("origin_id", row)?);
+            let destination = network.intern_node_id(destinations.value("destination_id", row)?);
+            pairs.push((origin, destination));
+        }
+    }
+    Ok(pairs)
 }
 
 fn prepare_disruption_inputs_batches(
@@ -1351,6 +1383,39 @@ fn integer_array(values: impl Iterator<Item = usize>) -> ArrayRef {
     Arc::new(UInt64Array::from(
         values.map(|value| value as u64).collect::<Vec<_>>(),
     )) as ArrayRef
+}
+
+pub fn skim_to_ffi<'py>(
+    py: Python<'py>,
+    pairs: &[(usize, usize)],
+    costs: &[Option<f64>],
+    network: &PreparedNetwork,
+) -> Result<Bound<'py, PyAny>, String> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("origin_id", network.node_kind.data_type(), false),
+        Field::new("destination_id", network.node_kind.data_type(), false),
+        Field::new("cost", DataType::Float64, true),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            external_id_array(
+                pairs
+                    .iter()
+                    .map(|(origin, _)| external_node_id(network, *origin)),
+                network.node_kind,
+            )?,
+            external_id_array(
+                pairs
+                    .iter()
+                    .map(|(_, destination)| external_node_id(network, *destination)),
+                network.node_kind,
+            )?,
+            Arc::new(Float64Array::from(costs.to_vec())) as ArrayRef,
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    batches_to_pyarrow_stream(py, vec![batch])
 }
 
 pub fn shortest_paths_to_ffi<'py>(

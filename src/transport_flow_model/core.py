@@ -62,6 +62,16 @@ class PreparedNetwork:
         )
         return {name: _from_ffi_stream(payload) for name, payload in result.items()}
 
+    def skim(
+        self,
+        od_pairs: pa.Table | pa.RecordBatch | pd.DataFrame,
+        *,
+        directed: bool = True,
+    ) -> pa.Table:
+        """Least-cost travel time per OD pair; see :func:`skim`."""
+        result = self._inner.skim(_to_table(od_pairs), directed)
+        return _from_ffi_stream(result)
+
     def disrupt(
         self,
         od_flows: pa.Table | pa.RecordBatch | pd.DataFrame,
@@ -118,6 +128,25 @@ def disrupt(
         capacity_constrained=capacity_constrained,
         directed=directed,
     )
+
+
+def skim(
+    network: pa.Table | pa.RecordBatch | pd.DataFrame,
+    od_pairs: pa.Table | pa.RecordBatch | pd.DataFrame,
+    *,
+    directed: bool = True,
+) -> pa.Table:
+    """Least-cost travel time for each OD pair, in input order.
+
+    ``od_pairs`` needs ``origin_id`` and ``destination_id`` columns; any
+    others (such as a demand ``value``) are ignored. Returns a table of
+    ``origin_id``, ``destination_id`` and ``cost``, with a null ``cost``
+    where the destination cannot be reached.
+
+    One shortest-path tree is built per distinct origin, so asking for many
+    pairs at once costs one search per origin rather than one per pair.
+    """
+    return prepare(network).skim(od_pairs, directed=directed)
 
 
 def shortest_paths_from(

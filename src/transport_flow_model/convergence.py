@@ -22,37 +22,36 @@ fixed-cost (flow-independent) networks.
 Cost of evaluating the gap
 --------------------------
 
-If you are writing an iterative method, budget for this: **evaluating the
-relative gap currently costs about three times an all-or-nothing pass**, so
-checking convergence on every iteration is roughly 75-80% of the iteration,
-not a rounding error. Measured with ``scripts/profile_gap_cost.py``
-(median of 3-5 repeats, single-threaded):
+If you are writing an iterative method, budget for this. Evaluating the
+relative gap asks for one shortest-path cost per OD pair, which
+:func:`relative_gap` gets from a single
+:func:`transport_flow_model.core.skim` call: the network is parsed once and
+one tree is built per distinct origin. That costs a fraction of an
+all-or-nothing pass, so checking convergence every iteration is affordable.
+Measured with ``scripts/profile_gap_cost.py`` (``pixi run
+profile-gap-cost``; median of 5 repeats, single-threaded):
 
-===============  =====  =======  =========  =========  ==========  ==============
+===============  =====  =======  =========  =========  ==========  ==========
 instance         links  origins  AON (s)    gap (s)    gap / AON   gap share
-===============  =====  =======  =========  =========  ==========  ==============
-siouxfalls          76       24     0.0017     0.0051       3.0x          75%
-anaheim            914       38     0.0057     0.0219       3.8x          79%
-chicago-sketch    2950      386     0.1631     0.4683       2.9x          74%
-===============  =====  =======  =========  =========  ==========  ==============
+===============  =====  =======  =========  =========  ==========  ==========
+siouxfalls          76       24     0.0013     0.0005       0.35x        26%
+anaheim            914       38     0.0036     0.0020       0.55x        36%
+chicago-sketch    2950      386     0.1132     0.0457       0.40x        29%
+===============  =====  =======  =========  =========  ==========  ==========
 
-The reason is not the shortest-path search itself. :func:`relative_gap`
-loops in Python over unique origins calling
-:func:`transport_flow_model.core.shortest_paths_from`, and that extension
-entry point re-reads the link table and rebuilds the graph on *every* call.
-The trees alone account for 0.28s of chicago-sketch's 0.47s — more than a
-whole ``core.allocate`` pass over the same 386 origins, which builds the
-graph once.
+It has not always been this way, and the reason is worth knowing before you
+add another call into the extension. :func:`relative_gap` used to loop in
+Python over unique origins calling
+:func:`transport_flow_model.core.shortest_paths_from`, and *every* call to
+that entry point re-reads the link table and rebuilds the graph — 85% of a
+call on chicago-sketch is parsing, not searching. The gap cost 0.47s there,
+three times an all-or-nothing pass. Asking for all the pairs in one call
+made it ten times faster.
 
-Practical consequences until that is fixed (see
-``issues/m0-11-fuse-gap-evaluation-into-aon.md``):
-
-- Evaluate the gap every *k* iterations, or only once a cheaper inner
-  criterion suggests convergence, rather than unconditionally every
-  iteration.
-- Report the gap trajectory in ``gap_history`` at whatever cadence you
-  chose, and say so in the method's docstring — the benchmark harness
-  spreads the trajectory uniformly over wall time.
+So: **batch your calls across the boundary.** A per-origin or per-scenario
+Python loop around a ``core`` function pays to rebuild the whole network
+every iteration. Where a batch is not natural, parse once with
+``core.prepare(links)`` and call methods on the result.
 """
 
 from __future__ import annotations
@@ -61,7 +60,6 @@ from typing import Any
 
 import numpy as np
 import pyarrow as pa
-import pyarrow.compute as pc
 
 from transport_flow_model import core
 from transport_flow_model.demand import Demand
@@ -134,28 +132,21 @@ def relative_gap(
         links.column_names.index("cost"), "cost", pa.array(t, type=pa.float64())
     )
     od = demand.to_table()
-    origins = od["origin_id"].to_numpy(zero_copy_only=False)
-    destinations = od["destination_id"].to_numpy(zero_copy_only=False)
-    values = od["value"].to_numpy(zero_copy_only=False).astype("float64")
+    skims = core.skim(
+        congested,
+        od.select(["origin_id", "destination_id"]),
+        directed=directed,
+    )
 
-    min_cost_total = 0.0
-    unreachable = 0
-    for origin in np.unique(origins):
-        reached = core.shortest_paths_from(congested, int(origin), directed=directed)
-        selection = origins == origin
-        positions = pc.index_in(
-            pa.array(destinations[selection], type=reached["node_id"].type),
-            reached["node_id"].combine_chunks(),
-        )
-        costs = pc.take(reached["cost"], positions).to_numpy(zero_copy_only=False)
-        missing = np.isnan(costs)
-        unreachable += int(missing.sum())
-        min_cost_total += float(np.dot(values[selection][~missing], costs[~missing]))
+    unreachable = skims["cost"].null_count
     if unreachable:
         raise ValueError(
             f"{unreachable} OD pairs have unreachable destinations at congested "
             "costs; relative gap is undefined for infeasible demand"
         )
+    values = od["value"].to_numpy(zero_copy_only=False).astype("float64")
+    costs = skims["cost"].to_numpy(zero_copy_only=False)
+    min_cost_total = float(np.dot(values, costs))
     if min_cost_total <= 0.0:
         raise ValueError("Total shortest-path travel time is zero or negative")
     return (total_cost - min_cost_total) / min_cost_total

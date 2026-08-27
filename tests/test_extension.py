@@ -299,3 +299,82 @@ def test_prepared_network_rejects_the_same_bad_input_as_allocate():
         )
     # the failed call leaves the handle usable
     assert prepared.n_nodes == 2
+
+
+def test_skim_matches_a_per_origin_shortest_path_loop():
+    """The batched skim must agree with the loop it replaces, nulls included."""
+    network = pd.DataFrame(
+        {
+            "edge_from": [0, 2, 1, 3],
+            "edge_to": [2, 1, 3, 1],
+            "edge_id": [0, 1, 2, 3],
+            "cost": [20.0, 10.0, 5.0, 50.0],
+        }
+    )
+    pairs = pd.DataFrame(
+        {
+            "origin_id": [0, 0, 0, 1, 3],
+            "destination_id": [1, 2, 3, 0, 1],
+        }
+    )
+    skims = core.skim(network, pairs)
+
+    expected = []
+    for origin, destination in zip(pairs.origin_id, pairs.destination_id):
+        reached = core.shortest_paths_from(network, int(origin))
+        costs = dict(zip(reached["node_id"].to_pylist(), reached["cost"].to_pylist()))
+        expected.append(costs.get(int(destination)))
+
+    assert skims["cost"].to_pylist() == expected
+    assert skims["origin_id"].to_pylist() == list(pairs.origin_id)
+    assert skims["destination_id"].to_pylist() == list(pairs.destination_id)
+    assert None in expected, "fixture should include an unreachable pair"
+
+
+def test_skim_builds_one_tree_per_origin():
+    """Repeated origins are answered from the same tree, in input order."""
+    network = pd.DataFrame(
+        {
+            "edge_from": ["A", "B"],
+            "edge_to": ["B", "C"],
+            "edge_id": ["AB", "BC"],
+            "cost": [1.0, 2.0],
+        }
+    )
+    pairs = pd.DataFrame(
+        {
+            "origin_id": ["A", "A", "A"],
+            "destination_id": ["C", "B", "C"],
+        }
+    )
+    assert core.skim(network, pairs)["cost"].to_pylist() == [3.0, 1.0, 3.0]
+
+
+def test_skim_ignores_extra_columns():
+    """A demand table can be passed straight in."""
+    network = pd.DataFrame(
+        {
+            "edge_from": ["A"],
+            "edge_to": ["B"],
+            "edge_id": ["AB"],
+            "cost": [7.0],
+        }
+    )
+    demand = pd.DataFrame(
+        {"origin_id": ["A"], "destination_id": ["B"], "value": [123.0]}
+    )
+    assert core.skim(network, demand)["cost"].to_pylist() == [7.0]
+
+
+def test_skim_undirected_uses_links_both_ways():
+    network = pd.DataFrame(
+        {
+            "edge_from": ["A"],
+            "edge_to": ["B"],
+            "edge_id": ["AB"],
+            "cost": [7.0],
+        }
+    )
+    pairs = pd.DataFrame({"origin_id": ["B"], "destination_id": ["A"]})
+    assert core.skim(network, pairs, directed=True)["cost"].to_pylist() == [None]
+    assert core.skim(network, pairs, directed=False)["cost"].to_pylist() == [7.0]

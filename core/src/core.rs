@@ -366,6 +366,37 @@ pub fn shortest_paths_from(edges: &[Edge], origin: usize, directed: bool) -> Vec
         .collect()
 }
 
+/// Least-cost travel time for each `(origin, destination)` pair.
+///
+/// One shortest-path tree per distinct origin, so a caller asking for many
+/// pairs pays for one search per origin rather than one per pair. Results are
+/// in input order; `None` where the destination cannot be reached.
+pub fn skim(edges: &[Edge], pairs: &[(usize, usize)], directed: bool) -> Vec<Option<f64>> {
+    let graph = Graph::new(edges, directed);
+    let mut costs = vec![None; pairs.len()];
+
+    let mut rows_by_origin: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (row, (origin, _)) in pairs.iter().enumerate() {
+        rows_by_origin.entry(*origin).or_default().push(row);
+    }
+
+    for (origin, rows) in rows_by_origin {
+        let Some(tree) = graph.single_source_shortest_path_tree(origin, None) else {
+            continue;
+        };
+        for row in rows {
+            let destination = pairs[row].1;
+            if let Some(cost) = tree.best_cost.get(destination) {
+                if cost.is_finite() {
+                    costs[row] = Some(*cost);
+                }
+            }
+        }
+    }
+
+    costs
+}
+
 pub fn allocate(
     edges: &[Edge],
     demands: &[Demand],

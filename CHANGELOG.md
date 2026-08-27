@@ -48,6 +48,9 @@ the versioning policy in the documentation).
   currently costs about three times as much — 75-80% of a would-be
   equilibrium iteration — mostly because `core.shortest_paths_from` rebuilds
   the graph on every call. Recorded in the `convergence` module docstring.
+- `core.skim(network, od_pairs) -> pa.Table`: least-cost travel time per OD
+  pair, one shortest-path tree per distinct origin over a network parsed
+  once, with a null cost where the destination is unreachable.
 - `core.prepare(links) -> PreparedNetwork`: a network parsed once, with
   `allocate` and `disrupt` methods that reuse it. Every `core` call
   otherwise re-parses its link table, interns ids and rebuilds the graph
@@ -85,6 +88,11 @@ the versioning policy in the documentation).
   Rust boundary is corrected: the wrappers are `core.allocate` and
   `core.disrupt` (not `allocate_arrow`/`disrupt_arrow`), and data crosses
   through the Arrow C stream interface rather than Arrow IPC.
+- `relative_gap` and `RadiationModel.generate` ask for all their
+  shortest-path costs in one `core.skim` call instead of looping over
+  origins. Evaluating the relative gap on chicago-sketch drops from 0.47s
+  to 0.046s, from three times an all-or-nothing pass to 0.4 times one, so
+  an iterative method can afford to check convergence every iteration.
 - `assignment.link_flows_table` takes a `coerce` keyword (default `True`,
   the previous behaviour). Iterative assignment methods should pass
   `coerce=False` so link flows stay `float64`: the integral flows of an

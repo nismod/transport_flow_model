@@ -7,6 +7,12 @@ per origin. An iterative equilibrium method builds equivalent shortest-path
 trees inside ``core.allocate`` for its all-or-nothing step, so checking
 convergence every iteration repeats that work.
 
+:func:`relative_gap` now asks for every OD pair in one
+:func:`transport_flow_model.core.skim` call, which parses the network once
+and builds one tree per origin. The ``loop`` column below still times the
+per-origin ``shortest_paths_from`` calls it used to make, as a reference
+point for how much that cost.
+
 No iterative method is implemented yet (``"msa"``, ``"fw"``, ``"bfw"`` and
 ``"staq"`` are reserved stubs), so this measures the two halves of a
 would-be iteration separately:
@@ -103,8 +109,8 @@ def measure(name: str, *, repeats: int) -> dict:
         gap = relative_gap(network, demand, result, distance_cost=distance_cost)
         gap_times.append(time.perf_counter() - start)
 
-        # The shortest-path trees alone, without the Python-side bookkeeping
-        # relative_gap does around them.
+        # What the same trees cost one origin at a time, as relative_gap
+        # used to ask for them.
         links = network.to_table()
         start = time.perf_counter()
         for origin in origins:
@@ -123,7 +129,7 @@ def measure(name: str, *, repeats: int) -> dict:
         "repeats": repeats,
         "aon_s": t_aon,
         "gap_s": t_gap,
-        "trees_s": t_trees,
+        "per_origin_loop_s": t_trees,
         "gap_share_of_iteration": t_gap / (t_aon + t_gap),
         "gap_vs_aon": t_gap / t_aon,
         "relative_gap": gap,
@@ -132,14 +138,14 @@ def measure(name: str, *, repeats: int) -> dict:
 
 def render(rows: list[dict]) -> str:
     header = (
-        "| instance | links | origins | AON (s) | gap (s) | trees (s) | "
+        "| instance | links | origins | AON (s) | gap (s) | loop (s) | "
         "gap / AON | gap share of iteration |"
     )
     lines = [header, "| --- " * 8 + "|"]
     for row in rows:
         lines.append(
             f"| {row['instance']} | {row['n_links']} | {row['n_origins']} | "
-            f"{row['aon_s']:.4f} | {row['gap_s']:.4f} | {row['trees_s']:.4f} | "
+            f"{row['aon_s']:.4f} | {row['gap_s']:.4f} | {row['per_origin_loop_s']:.4f} | "
             f"{row['gap_vs_aon']:.2f}x | {row['gap_share_of_iteration']:.0%} |"
         )
     return "\n".join(lines)

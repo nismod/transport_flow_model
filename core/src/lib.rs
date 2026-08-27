@@ -67,6 +67,21 @@ impl PyPreparedNetwork {
         Ok(result)
     }
 
+    fn skim<'py>(
+        &mut self,
+        py: Python<'py>,
+        od_pairs: &Bound<'py, PyAny>,
+        directed: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.inner
+            .scoped(|network| {
+                let pairs = arrow_ffi::prepare_skim_pairs_ffi(od_pairs, network)?;
+                let costs = core::skim(&network.edges, &pairs, directed);
+                arrow_ffi::skim_to_ffi(py, &pairs, &costs, network)
+            })
+            .map_err(PyValueError::new_err)
+    }
+
     fn disrupt<'py>(
         &mut self,
         py: Python<'py>,
@@ -131,6 +146,16 @@ fn disrupt_ffi<'py>(
 }
 
 #[pyfunction]
+fn skim_ffi<'py>(
+    py: Python<'py>,
+    network: &Bound<'py, PyAny>,
+    od_pairs: &Bound<'py, PyAny>,
+    directed: bool,
+) -> PyResult<Bound<'py, PyAny>> {
+    PyPreparedNetwork::new(network)?.skim(py, od_pairs, directed)
+}
+
+#[pyfunction]
 fn shortest_paths_from_ffi<'py>(
     py: Python<'py>,
     network: &Bound<'py, PyAny>,
@@ -148,6 +173,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(allocate_ffi, m)?)?;
     m.add_function(wrap_pyfunction!(disrupt_ffi, m)?)?;
     m.add_function(wrap_pyfunction!(shortest_paths_from_ffi, m)?)?;
+    m.add_function(wrap_pyfunction!(skim_ffi, m)?)?;
     m.add_class::<PyPreparedNetwork>()?;
     Ok(())
 }

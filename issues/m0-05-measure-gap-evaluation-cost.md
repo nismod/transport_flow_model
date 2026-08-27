@@ -34,3 +34,9 @@ The dominant cost is not the search but graph construction: `shortest_paths_from
 `read_network_ffi` on every call, so the per-origin loop rebuilds the whole graph once per
 origin. Recorded in the `convergence.py` module docstring and in `ARCHITECTURE.md`;
 follow-up filed as `m0-11`.
+
+**Since fixed.** Batching the query (`core.skim`) and hoisting the per-row
+column lookups in the Rust readers cut the gap on chicago-sketch from 0.4683s
+to 0.0457s, i.e. from 2.9x an all-or-nothing pass to 0.40x. The figures above
+are the *before*; see `m0-11` and the `convergence.py` docstring for current
+numbers.

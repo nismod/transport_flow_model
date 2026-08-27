@@ -19,7 +19,7 @@ Everything is under `src/transport_flow_model/`.
 | `assignment.py` | `assign()`, the `METHODS` registry and `register_method`; the `"sequential"` backend; reserved stubs for `"msa"`, `"fw"`, `"bfw"`, `"staq"`; `AssignmentResult` and `Provenance`. |
 | `convergence.py` | `relative_gap()` (convergence measure) and `link_costs()` (the BPR volume-delay function, currently hardcoded here). |
 | `disruption.py` | `disrupt()`, `Scenario`, `LinkDelta`, `ScenarioResult`, `DisruptionResults`. |
-| `core.py` | The only module that imports the Rust extension `_core`. Wraps `allocate()`, `disrupt()`, `shortest_paths_from()`, `version()`. |
+| `core.py` | The only module that imports the Rust extension `_core`. Wraps `allocate()`, `disrupt()`, `skim()`, `shortest_paths_from()`, `prepare()`, `version()`. |
 | `datasets.py` | Registry of benchmark datasets with checksums and cached downloads; `BEST_KNOWN` published objective values and equilibrium flows. |
 | `io.py` | TNTP readers (`read_tntp`, `read_tntp_flows`, `TNTPInstance`). |
 | `config.py` | `RunConfig`, a pydantic schema for JSON run configs, mapping 1:1 onto the API. |
@@ -63,8 +63,8 @@ wraps the returned dict into an `AssignmentResult` with `Provenance` attached.
 reroutes the baseline flows whose paths use a removed link.
 
 `relative_gap(network, demand, flows)` is a post-hoc quality measure, not part
-of the pipeline: it recomputes congested link costs, builds a shortest-path
-tree per origin, and returns how far total travel time exceeds
+of the pipeline: it recomputes congested link costs, skims the least-cost time
+for every OD pair, and returns how far total travel time exceeds
 shortest-path travel time. Iterative methods will also call it internally to
 decide when to stop.
 
@@ -85,7 +85,9 @@ serialization, no buffer copy.
 | --- | --- | --- |
 | `core.allocate(network, od, capacity_constrained=, directed=)` | `allocate_ffi` | `od_flows`, `network_flows`, `unassigned_od` |
 | `core.disrupt(network, od_flows, failed_edges, capacity_constrained=, directed=)` | `disrupt_ffi` | `rerouted_flows`, `network_flows`, `isolated_od`, `losses` |
+| `core.skim(network, od_pairs, directed=)` | `skim_ffi` | one table: `origin_id`, `destination_id`, `cost` (null if unreachable) |
 | `core.shortest_paths_from(network, origin, directed=)` | `shortest_paths_from_ffi` | one table: `node_id`, `cost` |
+| `core.prepare(network)` | `PreparedNetwork` | a handle with `allocate`, `disrupt` and `skim` methods |
 | `core.version()` | `version` | extension version string |
 
 No other module may import `_core`; see
@@ -102,6 +104,9 @@ extension is required, not optional: `import transport_flow_model` reaches
   `"fw"`, `"bfw"` and `"staq"` are filled in, not renamed. The full contract
   is
   [ADR-0001](docs/adr/0001-assignment-methods-are-registered-backends.md).
+- **A batched query across the boundary** — `core.skim(network, od_pairs)`
+  returns least-cost travel time per OD pair, and `core.prepare(links)` returns
+  a handle with `allocate`, `disrupt` and `skim` methods that reuse one parse.
 - **A new benchmark dataset** is an entry in `datasets.DATASETS` (URL,
   checksum, licence, provenance), optionally with a `BEST_KNOWN` published
   objective for validation.
@@ -155,12 +160,16 @@ would otherwise depend on the iteration count.
 
 ## Cost of evaluating convergence
 
-Evaluating `relative_gap` builds one shortest-path tree per origin,
-duplicating work an iterative method's all-or-nothing step already does.
-Measured with `scripts/profile_gap_cost.py`, it costs about **three times an
-all-or-nothing pass** — 75-80% of a would-be iteration — on SiouxFalls,
-Anaheim and Chicago-Sketch alike. Most of that is not the search: the
-`core.shortest_paths_from` entry point re-reads the link table and rebuilds
-the graph on every call, so the per-origin loop pays for graph construction
-once per origin. See the module docstring of `convergence.py` for the numbers
-and for what an iterative method should do about it.
+Evaluating `relative_gap` needs one shortest-path cost per OD pair. It asks
+for them all in one `core.skim` call, which parses the network once and builds
+one tree per distinct origin, and costs roughly 0.3-0.5x an all-or-nothing
+pass — cheap enough to check every iteration. See the module docstring of
+`convergence.py` for the measured numbers.
+
+That is a recent change, and the general lesson is in `ADR-0002`: **batch calls
+across the FFI boundary**. Every `core` function parses its inputs and rebuilds
+the graph before doing any work, which on chicago-sketch is 85% of a
+`shortest_paths_from` call. A Python loop calling one of them per origin or per
+scenario pays that every iteration; `relative_gap` did, and dropped tenfold when
+it stopped. Where a batch is not natural, `core.prepare(links)` parses once and
+returns a handle whose methods reuse it.

@@ -17,7 +17,7 @@ asked for and what was delivered.
 | m0-03 | [m0-03-architecture-decision-records.md](m0-03-architecture-decision-records.md) | Record architecture decisions as ADRs | docs | M1 Foundations & measurement | Done |
 | m0-04 | [m0-04-coerce-integral-dtype-instability.md](m0-04-coerce-integral-dtype-instability.md) | Link flow dtype depends on iteration count | python | M1 Foundations & measurement | Done |
 | m0-05 | [m0-05-measure-gap-evaluation-cost.md](m0-05-measure-gap-evaluation-cost.md) | Measure the cost of evaluating the relative gap | performance, python | M1 Foundations & measurement | Done |
-| m0-11 | [m0-11-fuse-gap-evaluation-into-aon.md](m0-11-fuse-gap-evaluation-into-aon.md) | Stop rebuilding the graph per origin when evaluating the gap | performance, rust, python | M3 Equilibrium & quasi-dynamic assignment | Open |
+| m0-11 | [m0-11-fuse-gap-evaluation-into-aon.md](m0-11-fuse-gap-evaluation-into-aon.md) | Stop rebuilding the graph per origin when evaluating the gap | performance, rust, python | M3 Equilibrium & quasi-dynamic assignment | Done |
 
 m0-06 to m0-10 are reserved for the assignment methods themselves and are
 tracked by the WS2 workplan issues (`ws2-01` … `ws2-07`), not here.

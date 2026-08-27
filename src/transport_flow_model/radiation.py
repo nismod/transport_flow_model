@@ -2,6 +2,7 @@
 
 from math import inf
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 
@@ -118,25 +119,9 @@ class RadiationModel:
         if len(zone_list) < 2:
             raise ValueError("Need at least 2 zones to generate OD matrix")
 
-        # Build integer node mapping and normalized network table once for all origins
-        node_id_map = list(
-            dict.fromkeys(
-                list(network_data["edge_from"]) + list(network_data["edge_to"])
-            )
-        )
-        node_value_to_id = {v: i for i, v in enumerate(node_id_map)}
-        net_cols: dict = {
-            "edge_from": network_data["edge_from"].map(node_value_to_id),
-            "edge_to": network_data["edge_to"].map(node_value_to_id),
-            "edge_id": range(len(network_data)),
-        }
-        if "cost" in network_data.columns:
-            net_cols["cost"] = pd.to_numeric(
-                network_data["cost"], errors="coerce"
-            ).fillna(1.0)
-        network_table = pa.Table.from_pandas(
-            pd.DataFrame(net_cols), preserve_index=False
-        )
+        # One skim over every zone pair, rather than a shortest-path call per
+        # origin: each call would re-parse the network and rebuild the graph.
+        distances_by_origin = self._skim_zone_pairs(network_data, zone_to_node)
 
         results = []
 
@@ -145,10 +130,7 @@ class RadiationModel:
             origin_node = zone_to_node[origin_zone_id]
             m_i = relevance_map[origin_zone_id]
 
-            # Get shortest paths from origin to all other zones
-            distances = self._shortest_paths_from(
-                origin_node, network_table, node_value_to_id, node_id_map
-            )
+            distances = distances_by_origin.get(origin_node, {})
 
             # For each destination zone
             for destination_zone_id in zone_list:
@@ -193,34 +175,57 @@ class RadiationModel:
 
         return pd.DataFrame(results)
 
-    def _shortest_paths_from(
-        self, origin_node, network_table, node_value_to_id, node_id_map
-    ):
-        """Compute shortest paths from origin_node to all reachable nodes.
+    def _skim_zone_pairs(self, network_data, zone_to_node):
+        """Undirected least-cost distances between every pair of zone nodes.
+
+        One call, so the network is parsed and the graph built once; the
+        extension builds one shortest-path tree per distinct origin.
 
         Parameters
         ----------
-        origin_node
-            Origin node identifier (original, user-facing value)
-        network_table : pa.Table
-            Normalized network table with integer node IDs (built once per generate call)
-        node_value_to_id : dict
-            Mapping from original node IDs to internal integers
-        node_id_map : list
-            Mapping from internal integers back to original node IDs
+        network_data : pandas.DataFrame
+            The network link table.
+        zone_to_node : dict
+            Mapping {zone_id → node_id}.
 
         Returns
         -------
         dict
-            Mapping {node_id → distance}
+            Nested mapping {origin node_id → {destination node_id → distance}},
+            omitting unreachable destinations so callers can default them.
         """
-        if origin_node not in node_value_to_id:
+        nodes = list(dict.fromkeys(zone_to_node.values()))
+        if not nodes:
             return {}
-        int_origin = node_value_to_id[origin_node]
-        result = core.shortest_paths_from(network_table, int_origin, directed=False)
-        node_ids = result.column("node_id").to_pylist()
-        costs = result.column("cost").to_pylist()
-        return {node_id_map[nid]: cost for nid, cost in zip(node_ids, costs)}
+
+        links: dict = {
+            "edge_from": network_data["edge_from"],
+            "edge_to": network_data["edge_to"],
+            "edge_id": range(len(network_data)),
+        }
+        if "cost" in network_data.columns:
+            links["cost"] = pd.to_numeric(network_data["cost"], errors="coerce").fillna(
+                1.0
+            )
+        network_table = pa.Table.from_pandas(pd.DataFrame(links), preserve_index=False)
+
+        pairs = pd.DataFrame(
+            {
+                "origin_id": np.repeat(nodes, len(nodes)),
+                "destination_id": np.tile(nodes, len(nodes)),
+            }
+        )
+        skims = core.skim(network_table, pairs, directed=False)
+
+        origins = skims.column("origin_id").to_pylist()
+        destinations = skims.column("destination_id").to_pylist()
+        costs = skims.column("cost").to_pylist()
+
+        distances: dict = {node: {} for node in nodes}
+        for origin, destination, cost in zip(origins, destinations, costs):
+            if cost is not None:
+                distances[origin][destination] = cost
+        return distances
 
     def _count_intervening_opportunities(
         self,
