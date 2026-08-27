@@ -481,7 +481,7 @@ pub fn disruption_to_ffi<'py>(
     ))
 }
 
-fn prepare_network_batches(batches: &[RecordBatch]) -> Result<PreparedNetwork, String> {
+pub fn prepare_network_batches(batches: &[RecordBatch]) -> Result<PreparedNetwork, String> {
     let node_kind = first_id_kind(batches, "edge_from")?;
     let edge_kind = first_id_kind(batches, "edge_id")?;
     let mut node_ids = Vec::new();

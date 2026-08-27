@@ -48,6 +48,9 @@ the versioning policy in the documentation).
   currently costs about three times as much — 75-80% of a would-be
   equilibrium iteration — mostly because `core.shortest_paths_from` rebuilds
   the graph on every call. Recorded in the `convergence` module docstring.
+- Criterion benchmarks for the Arrow reader path (`read_network_batches`,
+  `prepare_network_batches`), so `pixi run extension-bench` catches a
+  regression in how fast a network is parsed.
 - `CONTRIBUTING.md`: development environment, the canonical Pixi task table
   (moved out of `README.md`, and now including `pixi run bench`) and pull
   request expectations.
