@@ -214,13 +214,34 @@ METHODS["bfw"] = _not_implemented("bfw", "ws2-03")
 METHODS["staq"] = _not_implemented("staq", "ws2-06")
 
 
-def link_flows_table(links: pa.Table, network_flows: pa.Table) -> pa.Table:
-    """Attach per-link ``flow`` to a link table, preserving link order."""
+def link_flows_table(
+    links: pa.Table, network_flows: pa.Table, *, coerce: bool = True
+) -> pa.Table:
+    """Attach per-link ``flow`` to a link table, preserving link order.
+
+    Parameters
+    ----------
+    links : pyarrow.Table
+        Link table to attach flows to; any existing ``flow`` column is
+        replaced.
+    network_flows : pyarrow.Table
+        Per-link flows keyed by ``edge_id``; links not present get zero.
+    coerce : bool
+        Apply :func:`coerce_integral` to the result (the default, for
+        legacy parity). **Iterative methods must pass ``coerce=False``**:
+        an all-or-nothing first iteration on integral demand produces
+        integral flows and would be cast to ``int64``, while later
+        averaged iterations produce fractional flows and stay ``float64``,
+        so the output dtype would otherwise depend on the iteration count
+        and on the input data. The core extension always emits ``flow`` as
+        ``float64``, so ``coerce=False`` is stably ``float64``.
+    """
     positions = pc.index_in(links["edge_id"], network_flows["edge_id"].combine_chunks())
     flows = pc.fill_null(pc.take(network_flows["flow"], positions), 0)
     if "flow" in links.column_names:
         links = links.drop_columns(["flow"])
-    return coerce_integral(links.append_column("flow", flows))
+    table = links.append_column("flow", flows)
+    return coerce_integral(table) if coerce else table
 
 
 def coerce_integral(

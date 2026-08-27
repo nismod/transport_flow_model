@@ -1,7 +1,9 @@
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 from transport_flow_model import Demand, Network, assign
+from transport_flow_model.assignment import link_flows_table
 from transport_flow_model.model import Network as LegacyNetwork, OD
 
 
@@ -100,6 +102,49 @@ def test_unknown_method_raises(links, od):
 def test_planned_methods_not_implemented(links, od, method):
     with pytest.raises(NotImplementedError, match=method):
         assign(Network(links), Demand(od), method)
+
+
+def _network_flows(flows: list[float]) -> pa.Table:
+    """A core-style network_flows table: float64 flows keyed by edge_id."""
+    return pa.table(
+        {
+            "edge_id": pa.array(["XX", "YY", "ZZ", "AA"]),
+            "flow": pa.array(flows, type=pa.float64()),
+        }
+    )
+
+
+def test_link_flows_coerced_by_default(links):
+    """Integral flows are cast to int64, matching the legacy allocator."""
+    table = link_flows_table(
+        pa.Table.from_pandas(links), _network_flows([1.0, 2.0, 0.0, 3.0])
+    )
+    assert table["flow"].type == pa.int64()
+
+
+def test_link_flows_stay_float_when_not_coerced(links):
+    """``coerce=False`` keeps float64 even when every flow is integral.
+
+    An iterative method's first (all-or-nothing) iteration on integral
+    demand produces integral flows; later averaged iterations do not. With
+    the default coercion the output dtype would flip with the iteration
+    count, so iterative backends opt out.
+    """
+    integral = link_flows_table(
+        pa.Table.from_pandas(links), _network_flows([1.0, 2.0, 0.0, 3.0]), coerce=False
+    )
+    averaged = link_flows_table(
+        pa.Table.from_pandas(links), _network_flows([1.5, 1.5, 0.0, 3.0]), coerce=False
+    )
+    assert integral["flow"].type == pa.float64()
+    assert averaged["flow"].type == pa.float64()
+
+
+def test_fractional_link_flows_stay_float_either_way(links):
+    table = link_flows_table(
+        pa.Table.from_pandas(links), _network_flows([1.5, 1.5, 0.0, 3.0])
+    )
+    assert table["flow"].type == pa.float64()
 
 
 def test_uncapacitated_assignment(links, od):

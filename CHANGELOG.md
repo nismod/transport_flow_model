@@ -42,3 +42,12 @@ the versioning policy in the documentation).
 - CHANGELOG (this file), semantic versioning and deprecation policy
   (documented in the Sphinx docs under "Versioning and deprecation").
 - Sphinx API reference for the public API.
+
+### Changed
+
+- `assignment.link_flows_table` takes a `coerce` keyword (default `True`,
+  the previous behaviour). Iterative assignment methods should pass
+  `coerce=False` so link flows stay `float64`: the integral flows of an
+  all-or-nothing first iteration were cast to `int64` while later averaged
+  iterations stayed `float64`, making the output dtype depend on the
+  iteration count and on the input data.
