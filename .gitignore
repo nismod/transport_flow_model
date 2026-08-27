@@ -28,6 +28,8 @@ __pycache__
 *.so
 .ipynb_checkpoints
 _version.py
+.venv/
+.venv-ci/
 
 # Rust
 target/
