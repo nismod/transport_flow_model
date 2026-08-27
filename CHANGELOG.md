@@ -63,6 +63,10 @@ the versioning policy in the documentation).
 
 ### Changed
 
+- The Rust Arrow readers resolve and downcast each numeric column once per
+  record batch instead of looking it up by name for every row. Parsing a
+  network is roughly 1.6-1.8x faster, so a `core.shortest_paths_from` call
+  on chicago-sketch drops from 668us to 370us.
 - `README.md` now describes what the package does since the v0 API landed,
   rather than the earlier sequential capacity-constrained allocator, and
   notes that an editable install still needs the Rust extension built.

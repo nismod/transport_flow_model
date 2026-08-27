@@ -204,6 +204,130 @@ impl<'a> IdColumn<'a> {
     }
 }
 
+/// A numeric column resolved and downcast once per batch.
+///
+/// Mirrors [`IdColumn`]: the row loops that build `Edge`, `Demand` and
+/// `OdFlow` values used to call `column_by_name` and walk a `downcast_ref`
+/// chain for every cell, which dominated the cost of parsing a network.
+enum NumericColumn<'a> {
+    Float64(&'a Float64Array),
+    Float32(&'a Float32Array),
+    Int8(&'a Int8Array),
+    Int16(&'a Int16Array),
+    Int32(&'a Int32Array),
+    Int64(&'a Int64Array),
+    UInt8(&'a UInt8Array),
+    UInt16(&'a UInt16Array),
+    UInt32(&'a UInt32Array),
+    UInt64(&'a UInt64Array),
+}
+
+impl<'a> NumericColumn<'a> {
+    fn new(array: &'a dyn Array, name: &str) -> Result<Self, String> {
+        match array.data_type() {
+            DataType::Float64 => Ok(Self::Float64(
+                array.as_any().downcast_ref::<Float64Array>().unwrap(),
+            )),
+            DataType::Float32 => Ok(Self::Float32(
+                array.as_any().downcast_ref::<Float32Array>().unwrap(),
+            )),
+            DataType::Int8 => Ok(Self::Int8(
+                array.as_any().downcast_ref::<Int8Array>().unwrap(),
+            )),
+            DataType::Int16 => Ok(Self::Int16(
+                array.as_any().downcast_ref::<Int16Array>().unwrap(),
+            )),
+            DataType::Int32 => Ok(Self::Int32(
+                array.as_any().downcast_ref::<Int32Array>().unwrap(),
+            )),
+            DataType::Int64 => Ok(Self::Int64(
+                array.as_any().downcast_ref::<Int64Array>().unwrap(),
+            )),
+            DataType::UInt8 => Ok(Self::UInt8(
+                array.as_any().downcast_ref::<UInt8Array>().unwrap(),
+            )),
+            DataType::UInt16 => Ok(Self::UInt16(
+                array.as_any().downcast_ref::<UInt16Array>().unwrap(),
+            )),
+            DataType::UInt32 => Ok(Self::UInt32(
+                array.as_any().downcast_ref::<UInt32Array>().unwrap(),
+            )),
+            DataType::UInt64 => Ok(Self::UInt64(
+                array.as_any().downcast_ref::<UInt64Array>().unwrap(),
+            )),
+            _ => Err(format!("column {name} must be numeric")),
+        }
+    }
+
+    /// Resolve `name` in `batch`, or `None` when the column is absent.
+    fn optional(batch: &'a RecordBatch, name: &str) -> Result<Option<Self>, String> {
+        match batch.column_by_name(name) {
+            Some(array) => Self::new(array.as_ref(), name).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Resolve `name` in `batch`, erroring when the column is absent.
+    fn required(batch: &'a RecordBatch, name: &str) -> Result<Self, String> {
+        Self::new(required_column(batch, name)?.as_ref(), name)
+    }
+
+    fn is_null(&self, row: usize) -> bool {
+        match self {
+            Self::Float64(array) => array.is_null(row),
+            Self::Float32(array) => array.is_null(row),
+            Self::Int8(array) => array.is_null(row),
+            Self::Int16(array) => array.is_null(row),
+            Self::Int32(array) => array.is_null(row),
+            Self::Int64(array) => array.is_null(row),
+            Self::UInt8(array) => array.is_null(row),
+            Self::UInt16(array) => array.is_null(row),
+            Self::UInt32(array) => array.is_null(row),
+            Self::UInt64(array) => array.is_null(row),
+        }
+    }
+
+    fn value_unchecked(&self, row: usize) -> f64 {
+        match self {
+            Self::Float64(array) => array.value(row),
+            Self::Float32(array) => array.value(row) as f64,
+            Self::Int8(array) => array.value(row) as f64,
+            Self::Int16(array) => array.value(row) as f64,
+            Self::Int32(array) => array.value(row) as f64,
+            Self::Int64(array) => array.value(row) as f64,
+            Self::UInt8(array) => array.value(row) as f64,
+            Self::UInt16(array) => array.value(row) as f64,
+            Self::UInt32(array) => array.value(row) as f64,
+            Self::UInt64(array) => array.value(row) as f64,
+        }
+    }
+
+    /// Value at `row`; nulls are an error.
+    fn value(&self, name: &str, row: usize) -> Result<f64, String> {
+        if self.is_null(row) {
+            return Err(format!("column {name} cannot contain null values"));
+        }
+        Ok(self.value_unchecked(row))
+    }
+}
+
+/// Value at `row` from an optional column, falling back to `default` when the
+/// column is absent or the value is null.
+fn numeric_or_default(column: Option<&NumericColumn>, row: usize, default: f64) -> f64 {
+    match column {
+        Some(column) if !column.is_null(row) => column.value_unchecked(row),
+        _ => default,
+    }
+}
+
+/// Value at `row` from an optional column, `None` when absent or null.
+fn optional_numeric(column: Option<&NumericColumn>, row: usize) -> Option<f64> {
+    match column {
+        Some(column) if !column.is_null(row) => Some(column.value_unchecked(row)),
+        _ => None,
+    }
+}
+
 pub struct PreparedNetwork {
     pub edges: Vec<Edge>,
     edge_ids: Vec<ExternalId>,
@@ -373,6 +497,9 @@ fn prepare_network_batches(batches: &[RecordBatch]) -> Result<PreparedNetwork, S
         ensure_compatible_id_kind("edge_from", node_kind, "edge_from", from.kind())?;
         ensure_compatible_id_kind("edge_to", node_kind, "edge_to", to.kind())?;
         ensure_compatible_id_kind("edge_id", edge_kind, "edge_id", id.kind())?;
+        let cost = NumericColumn::optional(batch, "cost")?;
+        let capacity = NumericColumn::optional(batch, "capacity")?;
+        let flow = NumericColumn::optional(batch, "flow")?;
 
         for row in 0..batch.num_rows() {
             let edge_external_id = id.value("edge_id", row)?;
@@ -398,9 +525,9 @@ fn prepare_network_batches(batches: &[RecordBatch]) -> Result<PreparedNetwork, S
                 from,
                 to,
                 id: edge_id,
-                cost: numeric_value_or_default(batch, "cost", row, 1.0)?,
-                capacity: optional_numeric_value(batch, "capacity", row)?,
-                flow: numeric_value_or_default(batch, "flow", row, 0.0)?,
+                cost: numeric_or_default(cost.as_ref(), row, 1.0),
+                capacity: optional_numeric(capacity.as_ref(), row),
+                flow: numeric_or_default(flow.as_ref(), row, 0.0),
             });
         }
     }
@@ -431,13 +558,14 @@ fn prepare_demands_batches(
             "edge_from",
             destinations.kind(),
         )?;
+        let flows = NumericColumn::required(batch, "flow")?;
         for row in 0..batch.num_rows() {
             let origin = network.intern_node_id(origins.value("origin_id", row)?);
             let destination = network.intern_node_id(destinations.value("destination_id", row)?);
             demands.push(Demand {
                 origin,
                 destination,
-                flow: required_numeric_value(batch, "flow", row)?,
+                flow: flows.value("flow", row)?,
             });
         }
     }
@@ -470,12 +598,14 @@ fn prepare_disruption_inputs_batches(
         )?;
         let edge_paths = required_column(batch, "edge_path")?;
         ensure_edge_path_kind(edge_paths.as_ref(), network.edge_kind)?;
+        let flows = NumericColumn::required(batch, "flow")?;
+        let costs = NumericColumn::required(batch, "cost")?;
 
         for row in 0..batch.num_rows() {
             let origin = network.intern_node_id(origins.value("origin_id", row)?);
             let destination = network.intern_node_id(destinations.value("destination_id", row)?);
-            let flow = numeric_value(required_column(batch, "flow")?.as_ref(), "flow", row)?;
-            let cost = numeric_value(required_column(batch, "cost")?.as_ref(), "cost", row)?;
+            let flow = flows.value("flow", row)?;
+            let cost = costs.value("cost", row)?;
             let edge_path = external_edge_path_value(edge_paths.as_ref(), row, network)?;
 
             let mut is_affected = false;
@@ -710,49 +840,23 @@ fn integer_value(array: &dyn Array, name: &str, row: usize) -> Result<usize, Str
     }
 }
 
-fn numeric_value(array: &dyn Array, name: &str, row: usize) -> Result<f64, String> {
-    if array.is_null(row) {
-        return Err(format!("column {name} cannot contain null values"));
-    }
-    if let Some(array) = array.as_any().downcast_ref::<Float64Array>() {
-        Ok(array.value(row))
-    } else if let Some(array) = array.as_any().downcast_ref::<Float32Array>() {
-        Ok(array.value(row) as f64)
-    } else if let Some(array) = array.as_any().downcast_ref::<Int64Array>() {
-        Ok(array.value(row) as f64)
-    } else if let Some(array) = array.as_any().downcast_ref::<Int32Array>() {
-        Ok(array.value(row) as f64)
-    } else if let Some(array) = array.as_any().downcast_ref::<Int16Array>() {
-        Ok(array.value(row) as f64)
-    } else if let Some(array) = array.as_any().downcast_ref::<Int8Array>() {
-        Ok(array.value(row) as f64)
-    } else if let Some(array) = array.as_any().downcast_ref::<UInt64Array>() {
-        Ok(array.value(row) as f64)
-    } else if let Some(array) = array.as_any().downcast_ref::<UInt32Array>() {
-        Ok(array.value(row) as f64)
-    } else if let Some(array) = array.as_any().downcast_ref::<UInt16Array>() {
-        Ok(array.value(row) as f64)
-    } else if let Some(array) = array.as_any().downcast_ref::<UInt8Array>() {
-        Ok(array.value(row) as f64)
-    } else {
-        Err(format!("column {name} must be numeric"))
-    }
-}
-
 pub fn read_network_batches(batches: &[RecordBatch]) -> Result<Vec<Edge>, String> {
-    let mut edges = Vec::new();
+    let mut edges = Vec::with_capacity(batches.iter().map(RecordBatch::num_rows).sum());
     for batch in batches {
         let from = required_column(batch, "edge_from")?;
         let to = required_column(batch, "edge_to")?;
         let id = required_column(batch, "edge_id")?;
+        let cost = NumericColumn::optional(batch, "cost")?;
+        let capacity = NumericColumn::optional(batch, "capacity")?;
+        let flow = NumericColumn::optional(batch, "flow")?;
         for row in 0..batch.num_rows() {
             edges.push(Edge {
                 from: integer_value(from.as_ref(), "edge_from", row)?,
                 to: integer_value(to.as_ref(), "edge_to", row)?,
                 id: integer_value(id.as_ref(), "edge_id", row)?,
-                cost: numeric_value_or_default(batch, "cost", row, 1.0)?,
-                capacity: optional_numeric_value(batch, "capacity", row)?,
-                flow: numeric_value_or_default(batch, "flow", row, 0.0)?,
+                cost: numeric_or_default(cost.as_ref(), row, 1.0),
+                capacity: optional_numeric(capacity.as_ref(), row),
+                flow: numeric_or_default(flow.as_ref(), row, 0.0),
             });
         }
     }
@@ -780,42 +884,6 @@ fn disruption_to_batches(
         demands_batch(&output.isolated_od, network)?,
         losses_batch(&output.losses, network)?,
     ))
-}
-
-fn required_numeric_value(batch: &RecordBatch, name: &str, row: usize) -> Result<f64, String> {
-    let array = batch
-        .column_by_name(name)
-        .ok_or_else(|| format!("missing required column {name}"))?;
-    numeric_value(array.as_ref(), name, row)
-}
-
-fn numeric_value_or_default(
-    batch: &RecordBatch,
-    name: &str,
-    row: usize,
-    default: f64,
-) -> Result<f64, String> {
-    let Some(array) = batch.column_by_name(name) else {
-        return Ok(default);
-    };
-    if array.is_null(row) {
-        return Ok(default);
-    }
-    numeric_value(array.as_ref(), name, row)
-}
-
-fn optional_numeric_value(
-    batch: &RecordBatch,
-    name: &str,
-    row: usize,
-) -> Result<Option<f64>, String> {
-    let Some(array) = batch.column_by_name(name) else {
-        return Ok(None);
-    };
-    if array.is_null(row) {
-        return Ok(None);
-    }
-    numeric_value(array.as_ref(), name, row).map(Some)
 }
 
 fn od_flows_batch(rows: &[OdFlow], network: &PreparedNetwork) -> Result<RecordBatch, String> {
