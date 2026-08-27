@@ -1,7 +1,7 @@
 # ADR-0002: Arrow tables are the internal interchange
 
 - **Status:** Accepted
-- **Date:** 2026-08-27
+- **Date:** 2026-08-27 (amended 2026-08-27: prepared handles)
 
 ## Context
 
@@ -31,6 +31,15 @@ as "Arrow IPC streams" through `core.allocate_arrow` / `core.disrupt_arrow`.
 Both statements are out of date; the functions are `core.allocate`,
 `core.disrupt` and `core.shortest_paths_from`.)
 
+A later measurement added a third property the record has to account for.
+Every call across the boundary parses its Arrow inputs, interns identifiers and
+rebuilds the graph before doing any work, and that is *most* of what a call
+costs: for `core.shortest_paths_from` on chicago-sketch, 85% of the call is
+parse and graph construction and 15% is the actual search. Callers that loop —
+`convergence.relative_gap` over origins, `disruption.disrupt` over scenarios —
+pay it every iteration. A strict reading of "Arrow tables are the interchange"
+would forbid the obvious fix, which is to hold the parsed form.
+
 ## Decision
 
 **`pyarrow.Table` is the interchange format between modules and across the
@@ -50,6 +59,18 @@ import `_core`.**
   the existing shape: normalize inputs with `_to_table`, call `_core.<name>_ffi`,
   import the returned capsule(s) with `_from_ffi_stream`.
 
+Parsed state may be cached behind an opaque handle, under three conditions:
+
+- it is **constructed from Arrow** (`core.prepare(links)`),
+- **every method returns Arrow**, and
+- it is **never the only way to reach a capability** — each method has a
+  module-level counterpart taking tables, implemented as `prepare(...)` plus
+  one call.
+
+So a handle is a cache, not a second interchange format. Data still crosses as
+Arrow; what the handle saves is re-deriving from it. Code that does one call
+should keep using the free functions.
+
 ## Consequences
 
 For contributors:
@@ -62,6 +83,12 @@ For contributors:
   the extension optional to reason about, and means a change to the Rust
   signature has exactly one Python call site to update. `grep -rn "_core"
   src/` should return hits in `core.py` only.
+- **A shared handle must not accumulate state between calls.** Demand and path
+  tables may name nodes the network does not have; those ids are interned so
+  results can be labelled with them. `PreparedNetwork::scoped` rolls each
+  call's additions back, at a cost proportional to the number of unknown ids
+  rather than the size of the network. `test_prepared_network_does_not_leak_unknown_demand_ids`
+  fails without it.
 - Adding a Rust function is a two-sided change — `#[pyfunction]` plus
   `arrow_ffi` conversion in `core/src/`, and a wrapper in `core.py` — so it is
   reviewable as one diff.
@@ -86,3 +113,9 @@ For contributors:
 - **Extension functions imported directly wherever needed.** Fewer layers, but
   the FFI surface would be spread across the codebase and every Rust signature
   change would ripple.
+- **Stateless batched entry points instead of a handle** (pass every origin or
+  every scenario in one call). This keeps the interchange rule untouched and is
+  the right shape wherever the batch is natural, so it is preferred where it
+  fits. It does not cover the disruption loop, where each scenario's result is
+  consumed before the next is chosen, so a handle is needed as well. The two
+  are complementary, not alternatives.

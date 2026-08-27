@@ -207,3 +207,95 @@ def test_extension_rejects_unknown_edge_path_ids():
 
     with pytest.raises(ValueError, match="unknown edge_id"):
         core.disrupt(network, od_flows, ["AB"])
+
+
+def test_prepared_network_reports_shape():
+    network = pd.DataFrame(
+        {
+            "edge_from": ["A", "B"],
+            "edge_to": ["B", "C"],
+            "edge_id": ["AB", "BC"],
+        }
+    )
+    prepared = core.prepare(network)
+    assert prepared.n_links == 2
+    assert prepared.n_nodes == 3
+    assert "n_links=2" in repr(prepared)
+
+
+def test_prepared_network_matches_free_functions():
+    network = pd.DataFrame(
+        {
+            "edge_from": ["A", "C", "B", "B"],
+            "edge_to": ["C", "B", "D", "D"],
+            "edge_id": ["XX", "YY", "ZZ", "AA"],
+            "capacity": [100, 100, 50, 100],
+            "cost": [20, 10, 5, 50],
+        }
+    )
+    od = pd.DataFrame(
+        {
+            "origin_id": ["A", "A", "B"],
+            "destination_id": ["B", "C", "D"],
+            "flow": [30.0, 90.0, 100.0],
+        }
+    )
+    prepared = core.prepare(network)
+    for _ in range(2):  # reuse must not change the answer
+        assert prepared.allocate(od, capacity_constrained=True) == core.allocate(
+            network, od, capacity_constrained=True
+        )
+
+
+def test_prepared_network_does_not_leak_unknown_demand_ids():
+    """Ids named only by demand must not persist into the next call.
+
+    A prepared network interns identifiers once; demand may name nodes the
+    network does not have, and those are interned so unassigned rows can be
+    labelled with them. Without a rollback they would accumulate.
+    """
+    network = pd.DataFrame(
+        {
+            "edge_from": ["A"],
+            "edge_to": ["B"],
+            "edge_id": ["AB"],
+        }
+    )
+    unknown = pd.DataFrame({"origin_id": ["A"], "destination_id": ["Z"], "flow": [1.0]})
+    known = pd.DataFrame({"origin_id": ["A"], "destination_id": ["B"], "flow": [1.0]})
+
+    prepared = core.prepare(network)
+    assert prepared.n_nodes == 2
+
+    unreachable = prepared.allocate(unknown)
+    assert unreachable["unassigned_od"].num_rows == 1
+    assert unreachable["unassigned_od"]["destination_id"].to_pylist() == ["Z"]
+    assert prepared.n_nodes == 2, "unknown demand id leaked into the network"
+
+    # A later call is unaffected by the earlier one.
+    assert prepared.allocate(known) == core.allocate(network, known)
+    assert prepared.allocate(unknown)["unassigned_od"][
+        "destination_id"
+    ].to_pylist() == ["Z"]
+
+
+def test_prepared_network_rejects_the_same_bad_input_as_allocate():
+    network = pd.DataFrame(
+        {
+            "edge_from": ["A", "B"],
+            "edge_to": ["B", "C"],
+            "edge_id": ["AB", "AB"],
+        }
+    )
+    with pytest.raises(ValueError, match="duplicate edge_id"):
+        core.prepare(network)
+
+    prepared = core.prepare(
+        pd.DataFrame({"edge_from": ["A"], "edge_to": ["B"], "edge_id": ["AB"]})
+    )
+    with pytest.raises(ValueError, match="origin_id id type"):
+        prepared.allocate(
+            pd.DataFrame({"origin_id": [1], "destination_id": [2], "flow": [1.0]})
+        )
+    # the failed call leaves the handle usable
+    assert prepared.n_nodes == 2

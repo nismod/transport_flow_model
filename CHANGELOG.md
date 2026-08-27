@@ -48,6 +48,13 @@ the versioning policy in the documentation).
   currently costs about three times as much — 75-80% of a would-be
   equilibrium iteration — mostly because `core.shortest_paths_from` rebuilds
   the graph on every call. Recorded in the `convergence` module docstring.
+- `core.prepare(links) -> PreparedNetwork`: a network parsed once, with
+  `allocate` and `disrupt` methods that reuse it. Every `core` call
+  otherwise re-parses its link table, interns ids and rebuilds the graph
+  before doing any work, which callers looping over origins or scenarios
+  pay every iteration. The module-level functions are unchanged and are
+  now implemented as `prepare(...)` plus one call. ADR-0002 is amended to
+  record when a handle is permitted.
 - Criterion benchmarks for the Arrow reader path (`read_network_batches`,
   `prepare_network_batches`), so `pixi run extension-bench` catches a
   regression in how fast a network is parsed.

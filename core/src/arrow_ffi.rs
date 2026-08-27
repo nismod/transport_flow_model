@@ -647,6 +647,38 @@ impl PreparedNetwork {
     fn intern_node_id(&mut self, value: ExternalId) -> usize {
         intern_node(value, &mut self.node_ids, &mut self.node_id_to_internal)
     }
+
+    /// Number of links in the prepared network.
+    pub fn n_links(&self) -> usize {
+        self.edges.len()
+    }
+
+    /// Number of nodes the network's own links reach.
+    pub fn n_nodes(&self) -> usize {
+        self.node_ids.len()
+    }
+
+    /// Run `body` against this network, then discard any node ids it
+    /// interned from the call's own inputs.
+    ///
+    /// Demand and path tables may name nodes the network does not have;
+    /// [`prepare_demands_batches`] interns those so results can be labelled
+    /// with them. When the prepared network is reused across calls that
+    /// must not leak, so each call's additions are rolled back here. The
+    /// cost is proportional to the number of unknown ids, not to the size
+    /// of the network.
+    pub fn scoped<T>(
+        &mut self,
+        body: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let base = self.node_ids.len();
+        let result = body(self);
+        let added: Vec<ExternalId> = self.node_ids.drain(base..).collect();
+        for id in added {
+            self.node_id_to_internal.remove(&id);
+        }
+        result
+    }
 }
 
 fn intern_node(
