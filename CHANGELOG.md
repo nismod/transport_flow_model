@@ -42,6 +42,13 @@ the versioning policy in the documentation).
 - CHANGELOG (this file), semantic versioning and deprecation policy
   (documented in the Sphinx docs under "Versioning and deprecation").
 - Sphinx API reference for the public API.
+- Architecture decision records under `docs/adr/`, with a template and an
+  index: ADR-0001 records the assignment backend contract (what `assign()`
+  passes a backend, what dict it must return, and that reserved method
+  names are filled in rather than renamed); ADR-0002 records that
+  `pyarrow.Table` is the internal interchange and that
+  `transport_flow_model.core` is the only module importing the `_core`
+  extension.
 
 ### Changed
 
