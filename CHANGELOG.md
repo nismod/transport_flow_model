@@ -42,6 +42,8 @@ the versioning policy in the documentation).
 - CHANGELOG (this file), semantic versioning and deprecation policy
   (documented in the Sphinx docs under "Versioning and deprecation").
 - Sphinx API reference for the public API.
+- `ARCHITECTURE.md`: module map, run data flow, the Python/Rust boundary,
+  extension points and the table schemas in one place.
 - Architecture decision records under `docs/adr/`, with a template and an
   index: ADR-0001 records the assignment backend contract (what `assign()`
   passes a backend, what dict it must return, and that reserved method
