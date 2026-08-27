@@ -41,7 +41,13 @@ the versioning policy in the documentation).
 - `pydantic >= 2` is now a dependency.
 - CHANGELOG (this file), semantic versioning and deprecation policy
   (documented in the Sphinx docs under "Versioning and deprecation").
-- Sphinx API reference for the public API.
+- Sphinx API reference for the public API, including `relative_gap` and
+  `link_costs`.
+- `scripts/profile_gap_cost.py` (`pixi run profile-gap-cost`): measures what
+  evaluating the relative gap costs relative to an all-or-nothing pass. It
+  currently costs about three times as much — 75-80% of a would-be
+  equilibrium iteration — mostly because `core.shortest_paths_from` rebuilds
+  the graph on every call. Recorded in the `convergence` module docstring.
 - `CONTRIBUTING.md`: development environment, the canonical Pixi task table
   (moved out of `README.md`, and now including `pixi run bench`) and pull
   request expectations.

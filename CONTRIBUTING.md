@@ -70,6 +70,7 @@ This table is the canonical list.
 | `pixi run prepare-benchmark-data` | Download and prepare the generated West Yorkshire benchmark dataset. |
 | `pixi run benchmark-scripts-smoke` | Quick script-level benchmark against `config.example.json`. |
 | `pixi run benchmark-scripts` | Time the allocation and disruption scripts, writing CSV/JSON output. |
+| `pixi run profile-gap-cost` | Measure what evaluating the relative gap costs per assignment iteration. |
 | `pixi run profile-flow-scripts` | py-spy flamegraphs for both flow scripts. |
 | `pixi run profile-flow-allocation` | Flamegraph for `flow_allocation.py` only. |
 | `pixi run profile-flow-disruptions` | Flamegraph for `flow_disruptions.py` only. |

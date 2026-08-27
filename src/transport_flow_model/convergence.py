@@ -18,6 +18,41 @@ Link travel times follow the BPR convention used by the TNTP datasets
 ``cost * (1 + alpha * (x / capacity)^beta) + distance_cost * length``.
 Networks without ``alpha``/``beta``/``capacity`` attributes are treated as
 fixed-cost (flow-independent) networks.
+
+Cost of evaluating the gap
+--------------------------
+
+If you are writing an iterative method, budget for this: **evaluating the
+relative gap currently costs about three times an all-or-nothing pass**, so
+checking convergence on every iteration is roughly 75-80% of the iteration,
+not a rounding error. Measured with ``scripts/profile_gap_cost.py``
+(median of 3-5 repeats, single-threaded):
+
+===============  =====  =======  =========  =========  ==========  ==============
+instance         links  origins  AON (s)    gap (s)    gap / AON   gap share
+===============  =====  =======  =========  =========  ==========  ==============
+siouxfalls          76       24     0.0017     0.0051       3.0x          75%
+anaheim            914       38     0.0057     0.0219       3.8x          79%
+chicago-sketch    2950      386     0.1631     0.4683       2.9x          74%
+===============  =====  =======  =========  =========  ==========  ==============
+
+The reason is not the shortest-path search itself. :func:`relative_gap`
+loops in Python over unique origins calling
+:func:`transport_flow_model.core.shortest_paths_from`, and that extension
+entry point re-reads the link table and rebuilds the graph on *every* call.
+The trees alone account for 0.28s of chicago-sketch's 0.47s — more than a
+whole ``core.allocate`` pass over the same 386 origins, which builds the
+graph once.
+
+Practical consequences until that is fixed (see
+``issues/m0-11-fuse-gap-evaluation-into-aon.md``):
+
+- Evaluate the gap every *k* iterations, or only once a cheaper inner
+  criterion suggests convergence, rather than unconditionally every
+  iteration.
+- Report the gap trajectory in ``gap_history`` at whatever cadence you
+  chose, and say so in the method's docstring — the benchmark harness
+  spreads the trajectory uniformly over wall time.
 """
 
 from __future__ import annotations

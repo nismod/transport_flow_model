@@ -30,6 +30,13 @@ Assignment
    :members:
    :undoc-members:
 
+Convergence
+-----------
+
+.. automodule:: transport_flow_model.convergence
+   :members:
+   :undoc-members:
+
 Disruption
 ----------
 

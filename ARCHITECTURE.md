@@ -155,7 +155,12 @@ would otherwise depend on the iteration count.
 
 ## Cost of evaluating convergence
 
-<!-- M0-05 placeholder: replaced with the measured figures. -->
-Evaluating `relative_gap` builds one shortest-path tree per origin, duplicating
-work an iterative method's all-or-nothing step already does. Measured cost per
-iteration: *(to be filled in from `scripts/profile_gap_cost.py`)*.
+Evaluating `relative_gap` builds one shortest-path tree per origin,
+duplicating work an iterative method's all-or-nothing step already does.
+Measured with `scripts/profile_gap_cost.py`, it costs about **three times an
+all-or-nothing pass** — 75-80% of a would-be iteration — on SiouxFalls,
+Anaheim and Chicago-Sketch alike. Most of that is not the search: the
+`core.shortest_paths_from` entry point re-reads the link table and rebuilds
+the graph on every call, so the per-origin loop pays for graph construction
+once per origin. See the module docstring of `convergence.py` for the numbers
+and for what an iterative method should do about it.
