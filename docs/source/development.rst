@@ -18,87 +18,28 @@ If SSH access is not configured, use the HTTPS URL instead:
    git clone https://github.com/nismod/transport_flow_model.git
    cd transport_flow_model
 
-Development environment
------------------------
+Environment, tasks and pull requests
+------------------------------------
 
-The project uses ``pixi`` for the development environment. From the repository
-root, run project tasks through ``pixi run`` so commands use the pinned
-dependencies from ``pyproject.toml`` and ``pixi.lock``.
+``CONTRIBUTING.md`` in the repository root is the canonical reference for the
+development environment, the full list of Pixi tasks, and what a pull request
+is expected to contain. In short:
 
 .. code-block:: console
 
    pixi install
-
-For a direct editable install without Pixi, use:
-
-.. code-block:: console
-
-   pip install -e .
-
-Pixi is the preferred workflow for contributors and automation agents because it
-also installs the configured development and documentation dependencies.
-
-Tests
------
-
-Run the full test suite with:
-
-.. code-block:: console
-
+   pixi run extension-build
    pixi run test
 
-This currently runs:
-
-.. code-block:: console
-
-   python -m pytest tests
-
-Linting and formatting
-----------------------
-
-The project currently uses Ruff for linting and formatting.
-
-Run lint checks with:
-
-.. code-block:: console
-
-   pixi run lint
-
-Run formatting with:
-
-.. code-block:: console
-
-   pixi run format
-
-These tasks are defined in ``pyproject.toml``. If a new lint or formatting tool
-is added later, add it there and prefer a Pixi task over documenting an ad hoc
-command.
-
-Type checking
--------------
+``ARCHITECTURE.md`` describes how the modules fit together, and ``docs/adr/``
+records the decisions behind the design — start with ADR-0001 if you are
+adding an assignment method.
 
 No static type checker is currently configured for this project. There is no
 ``mypy``, ``pyright``, or equivalent Pixi task in ``pyproject.toml`` at the
-moment.
-
-For agents and CI automation, do not assume a type-check command exists. Add a
-type-checking dependency and a dedicated Pixi task before making type checks a
-required validation step.
-
-Documentation
--------------
-
-Build the HTML documentation with:
-
-.. code-block:: console
-
-   pixi run docs
-
-Run doctests with:
-
-.. code-block:: console
-
-   pixi run doctest
+moment. For agents and CI automation, do not assume a type-check command
+exists: add a type-checking dependency and a dedicated Pixi task before making
+type checks a required validation step.
 
 Benchmark data preparation
 --------------------------
@@ -122,10 +63,8 @@ polygons. The script writes generated data under
 - ``processed_data/damages/failure_set.csv`` for disruption benchmarking.
 
 The default OD generation uses the 10 largest residential and 10 largest
-commercial polygons. This keeps preparation and later allocation runs practical
-on the current pure-Python shortest-path implementation. Use
-``--max-zones-per-landuse`` to scale the OD matrix up or ``0`` to use all
-downloaded zones:
+commercial polygons. Use ``--max-zones-per-landuse`` to scale the OD matrix up
+or ``0`` to use all downloaded zones:
 
 .. code-block:: console
 
@@ -134,11 +73,35 @@ downloaded zones:
 Use ``--overwrite`` when regenerating the benchmark dataset. ``benchmark_data/``
 and OSMnx ``cache/`` output are ignored by Git.
 
-Benchmarking scripts
---------------------
+``config.west_yorkshire.json`` refers to this generated data, so
+``tests/test_config.py`` does not fully pass until it has been prepared.
 
-The repository includes a stdlib-only benchmark harness for integration timing
-of the two command-line flow scripts:
+Assignment benchmarks
+---------------------
+
+``scripts/benchmark_assignment.py`` (``pixi run bench``) is the benchmark
+harness for assignment methods. It runs each (instance, method, threads) case
+in a fresh subprocess and records the gap trajectory, wall time and peak RSS:
+
+.. code-block:: console
+
+   pixi run bench --suite small
+   pixi run bench --suite large --repeats 5
+
+``--suite small`` uses the vendored SiouxFalls instance; ``--suite large``
+downloads TNTP instances into the dataset cache. Pass ``--baseline
+summary.json`` to fail on a wall-time or relative-gap regression, and
+``--write-baseline`` to record one.
+
+Wall time for equilibrium methods is only meaningful together with solution
+quality, so every case records the relative gap
+(:func:`transport_flow_model.relative_gap`) alongside its timings.
+
+Benchmarking the flow scripts
+-----------------------------
+
+The repository also includes a stdlib-only benchmark harness for integration
+timing of the two command-line flow scripts:
 
 - ``scripts/flow_model/flow_allocation.py``
 - ``scripts/flow_model/flow_disruptions.py``
@@ -241,28 +204,33 @@ outputs already exist and should be reused, pass ``--skip-setup-allocation``:
 Rust extension
 --------------
 
-The package uses a Rust core. Build the native extension when developing or
-benchmarking the Rust code:
+The package uses a Rust core, and it is not optional: importing
+``transport_flow_model`` reaches ``transport_flow_model.core``, which imports
+the compiled extension. Build it when setting up a checkout, and rebuild it
+after changing anything under ``core/``:
 
 .. code-block:: console
 
    pixi run extension-build
 
 This task runs ``maturin develop --manifest-path Cargo.toml`` and installs the
-PyO3 module as ``transport_flow_model._core`` in the Pixi environment. The
-public helper module is ``transport_flow_model.core``.
+PyO3 module as ``transport_flow_model._core`` in the Pixi environment.
 
 The extension is structured in two layers:
 
 - A Python-independent Rust core for graph, OD, allocation, disruption, unit
-  tests, and Criterion benchmarks.
-- A PyO3 wrapper that exchanges in-memory Arrow IPC streams with Python.
+  tests, and Criterion benchmarks (``core/src/core.rs``).
+- A PyO3 wrapper that exchanges in-memory Arrow data with Python
+  (``core/src/lib.rs`` and ``core/src/arrow_ffi.rs``).
 
-The Arrow IPC boundary keeps file I/O in the wrapper language. Python callers
-can pass ``pyarrow.Table``, ``pyarrow.RecordBatch``, or ``pandas.DataFrame`` to
-``transport_flow_model.core.allocate_arrow`` and
-``transport_flow_model.core.disrupt_arrow``. Other language wrappers can target
-the same Arrow stream schemas without depending on Python data-frame internals.
+Data crosses the boundary through the Arrow C stream interface: Python passes
+Arrow tables in, and Rust returns PyCapsule-wrapped record batch streams, with
+no serialization step and no copy of the buffers. Only
+``transport_flow_model.core`` imports the extension; it exposes
+``core.allocate``, ``core.disrupt``, ``core.shortest_paths_from`` and
+``core.version``. Other language wrappers can target the same Arrow schemas
+without depending on Python data-frame internals. See ADR-0002 in
+``docs/adr/``.
 
 Run unit tests with:
 
@@ -279,42 +247,3 @@ Run microbenchmarks with:
 The scaffold intentionally avoids extra graph/routing crates for now. Add new
 Rust dependencies only when they replace substantial local complexity or are
 needed for a specific algorithmic feature.
-
-Pixi command reference
-----------------------
-
-The current Pixi tasks are:
-
-.. list-table::
-   :header-rows: 1
-
-   * - Command
-     - Purpose
-   * - ``pixi run test``
-     - Run ``python -m pytest tests``.
-   * - ``pixi run lint``
-     - Run Ruff lint checks.
-   * - ``pixi run format``
-     - Format Python code with Ruff.
-   * - ``pixi run docs``
-     - Build Sphinx HTML documentation.
-   * - ``pixi run doctest``
-     - Run Sphinx doctests.
-   * - ``pixi run prepare-benchmark-data``
-     - Generate the ignored West Yorkshire benchmark input dataset.
-   * - ``pixi run benchmark-scripts-smoke``
-     - Run a quick script-level benchmark using ``config.example.json``.
-   * - ``pixi run benchmark-scripts``
-     - Run script-level timing benchmarks and write CSV/JSON outputs.
-   * - ``pixi run profile-flow-scripts``
-     - Write flamegraphs for both allocation and disruption scripts.
-   * - ``pixi run profile-flow-allocation``
-     - Write a flamegraph for allocation only.
-   * - ``pixi run profile-flow-disruptions``
-     - Write a flamegraph for disruption only.
-   * - ``pixi run extension-build``
-     - Build and install the PyO3 Rust extension.
-   * - ``pixi run extension-test``
-     - Run unit tests for the extension.
-   * - ``pixi run extension-bench``
-     - Run Criterion benchmarks for the extension.

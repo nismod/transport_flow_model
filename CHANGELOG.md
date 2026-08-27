@@ -42,6 +42,9 @@ the versioning policy in the documentation).
 - CHANGELOG (this file), semantic versioning and deprecation policy
   (documented in the Sphinx docs under "Versioning and deprecation").
 - Sphinx API reference for the public API.
+- `CONTRIBUTING.md`: development environment, the canonical Pixi task table
+  (moved out of `README.md`, and now including `pixi run bench`) and pull
+  request expectations.
 - `ARCHITECTURE.md`: module map, run data flow, the Python/Rust boundary,
   extension points and the table schemas in one place.
 - Architecture decision records under `docs/adr/`, with a template and an
@@ -54,6 +57,14 @@ the versioning policy in the documentation).
 
 ### Changed
 
+- `README.md` now describes what the package does since the v0 API landed,
+  rather than the earlier sequential capacity-constrained allocator, and
+  notes that an editable install still needs the Rust extension built.
+- The development docs page no longer duplicates the environment, task and
+  lint instructions now in `CONTRIBUTING.md`, and its description of the
+  Rust boundary is corrected: the wrappers are `core.allocate` and
+  `core.disrupt` (not `allocate_arrow`/`disrupt_arrow`), and data crosses
+  through the Arrow C stream interface rather than Arrow IPC.
 - `assignment.link_flows_table` takes a `coerce` keyword (default `True`,
   the previous behaviour). Iterative assignment methods should pass
   `coerce=False` so link flows stay `float64`: the integral flows of an

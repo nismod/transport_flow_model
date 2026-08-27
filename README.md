@@ -3,67 +3,64 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19566285.svg)](https://doi.org/10.5281/zenodo.19566285)
 [![docs](https://github.com/nismod/transport_flow_model/actions/workflows/docs.yml/badge.svg)](https://nismod.github.io/transport_flow_model)
 
-This Python package implements iterative capacity-constrained network flow
-allocation. It routes flows through networks sequentially until link capacities
-are exhausted, providing a simplified tool for infrastructure risk and
-resilience analysis.
+This Python package models flows on transport networks for infrastructure risk
+and resilience analysis. It assigns origin-destination demand to network
+routes, evaluates what happens to those flows when links are disrupted, and
+quantifies the resulting rerouting cost and loss of access.
+
+Performance-critical routing and allocation run in a Rust core; data is handled
+as Apache Arrow tables throughout.
 
 It is part of the open-source [National Infrastructure Systems Model (NISMOD)
 ecosystem](https://github.com/nismod) developed by the [Oxford Programme for
 Sustainable Infrastructure Systems (OPSIS)](https://opsis.eci.ox.ac.uk) at the
 University of Oxford.
 
-To run the model:
+## Installation
+
+The Rust extension is required, so an editable install also needs a build step
+(and a Rust toolchain):
 
 ```bash
 pip install -e .
+maturin develop --release
+```
+
+Contributors should use [`pixi`](https://pixi.prefix.dev) instead — see
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## Usage
+
+```python
+from transport_flow_model import Network, Demand, assign, disrupt
+
+network = Network.from_dataframe(links)           # edge_from, edge_to, edge_id, cost, ...
+demand = Demand.from_dataframe(od)                # origin_id, destination_id, value
+
+result = assign(network, demand, method="sequential", include_paths=True)
+result.link_flows      # per-link flow
+result.skims           # per-OD-pair cost
+
+summary = disrupt(network, scenarios, base=result).summary()   # loss per scenario
+```
+
+Or run the config-driven scripts:
+
+```bash
 python scripts/flow_model/flow_allocation.py ./config.example.json
 python scripts/flow_model/flow_disruptions.py ./config.example.json
 ```
 
-## Development
+## Documentation
 
-We recommend the use of [`pixi`](https://pixi.prefix.dev) to manage a
-development environment.
-
-To run the tests (see `[tool.pixi.tasks]` within `pyproject.toml`):
-
-```bash
-pixi run test
-```
-
-Useful Pixi commands:
-
-| Command                             | Purpose                                                                         |
-| ----------------------------------- | ------------------------------------------------------------------------------- |
-| `pixi run test`                     | Run the pytest suite.                                                           |
-| `pixi run lint`                     | Run Ruff lint checks.                                                           |
-| `pixi run format`                   | Format Python code with Ruff.                                                   |
-| `pixi run docs`                     | Build the Sphinx HTML documentation.                                            |
-| `pixi run doctest`                  | Run Sphinx doctests in the documentation.                                       |
-| `pixi run prepare-benchmark-data`   | Download and prepare the generated West Yorkshire benchmark dataset.            |
-| `pixi run benchmark-scripts-smoke`  | Run a quick integration benchmark against `config.example.json`.                |
-| `pixi run benchmark-scripts`        | Time the allocation and disruption scripts and write benchmark CSV/JSON output. |
-| `pixi run profile-flow-scripts`     | Write CPU/time flamegraphs for allocation and disruption.                       |
-| `pixi run profile-flow-allocation`  | Write a flamegraph for `flow_allocation.py`.                                    |
-| `pixi run profile-flow-disruptions` | Write a flamegraph for `flow_disruptions.py`.                                   |
-| `pixi run extension-build`          | Build and install the experimental PyO3 Rust extension in the Pixi environment. |
-| `pixi run extension-test`           | Run unit tests for the extension.                                               |
-| `pixi run extension-bench`          | Run Criterion benchmarks for the extension.                                     |
-
-To add a new package dependency, make sure to use `--pypi` to include it
-in the `pyproject.toml` `dependencies` table:
-
-```bash
-pixi add --pypi geopandas
-```
-
-To add a new development dependency, make sure to use `--pypi` and `--feature
-dev` to include it in the `pyproject.toml` `[dependency-groups] dev` table:
-
-```bash
-pixi add --pypi --feature dev pytest
-```
+- [User guides and API reference](https://nismod.github.io/transport_flow_model)
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — how the code fits together
+- [`docs/adr/`](docs/adr/) — architecture decision records
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — development environment, tasks and PR
+  expectations
+- [`DEVELOPMENT.md`](DEVELOPMENT.md) — planned functionality, benchmarking
+  approach and literature review
+- [`CHANGELOG.md`](CHANGELOG.md) — release notes; the public API is versioned
 
 ## Acknowledgments
 
