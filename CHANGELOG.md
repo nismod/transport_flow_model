@@ -51,6 +51,11 @@ the versioning policy in the documentation).
 - `core.skim(network, od_pairs) -> pa.Table`: least-cost travel time per OD
   pair, one shortest-path tree per distinct origin over a network parsed
   once, with a null cost where the destination is unreachable.
+- `core.prepare_disruption(links, paths) -> PreparedDisruption`: a network
+  and a baseline path set parsed once, with a `scenario(failed_edges)`
+  method. The path table is usually far larger than the link table and
+  nothing in it depends on which links fail, so a scenario run should not
+  re-read it every time.
 - `core.prepare(links) -> PreparedNetwork`: a network parsed once, with
   `allocate` and `disrupt` methods that reuse it. Every `core` call
   otherwise re-parses its link table, interns ids and rebuilds the graph
@@ -88,6 +93,11 @@ the versioning policy in the documentation).
   Rust boundary is corrected: the wrappers are `core.allocate` and
   `core.disrupt` (not `allocate_arrow`/`disrupt_arrow`), and data crosses
   through the Arrow C stream interface rather than Arrow IPC.
+- `disrupt` prepares the network and baseline paths once for the whole
+  scenario run. On chicago-sketch a scenario drops from 72ms to 2.3ms, so
+  10 000 scenarios go from about 12 minutes to under half a minute. A
+  scenario that removes a link carrying no flow used to cost as much as one
+  that reroutes real traffic.
 - `relative_gap` and `RadiationModel.generate` ask for all their
   shortest-path costs in one `core.skim` call instead of looping over
   origins. Evaluating the relative gap on chicago-sketch drops from 0.47s

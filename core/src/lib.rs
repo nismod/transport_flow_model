@@ -81,31 +81,51 @@ impl PyPreparedNetwork {
             })
             .map_err(PyValueError::new_err)
     }
+}
 
-    fn disrupt<'py>(
-        &mut self,
+/// A network and a baseline path set, both parsed once, for scenario loops.
+///
+/// Reading the path table dominates a scenario's cost and none of it depends
+/// on which links fail, so a run over many scenarios should parse it once.
+#[pyclass(name = "PreparedDisruption", module = "transport_flow_model._core")]
+struct PyPreparedDisruption {
+    network: arrow_ffi::PreparedNetwork,
+    paths: arrow_ffi::PreparedOdPaths,
+}
+
+#[pymethods]
+impl PyPreparedDisruption {
+    #[new]
+    fn new(network: &Bound<'_, PyAny>, od_flows: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let mut network = arrow_ffi::prepare_network_ffi(network).map_err(PyValueError::new_err)?;
+        let paths = arrow_ffi::prepare_od_paths_ffi(od_flows, &mut network)
+            .map_err(PyValueError::new_err)?;
+        Ok(Self { network, paths })
+    }
+
+    /// Reroute the baseline flows that use any of `failed_edges`.
+    fn scenario<'py>(
+        &self,
         py: Python<'py>,
-        od_flows: &Bound<'py, PyAny>,
         failed_edges: &Bound<'py, PyAny>,
         capacity_constrained: bool,
         directed: bool,
     ) -> PyResult<Bound<'py, PyDict>> {
-        let (rerouted_flows, network_flows, isolated_od, losses) = self
-            .inner
-            .scoped(|network| {
-                let od_flows = arrow_ffi::prepare_od_flows_ffi(od_flows, failed_edges, network)?;
-                let output = core::disrupt_with_preprocessed(
-                    &network.edges,
-                    &od_flows.inputs.affected_flows,
-                    &od_flows.inputs.current_edge_flows,
-                    &od_flows.inputs.initial_costs_by_od,
-                    &od_flows.failed_edges,
-                    capacity_constrained,
-                    directed,
-                );
-                arrow_ffi::disruption_to_ffi(py, &output, network)
-            })
+        let failed_edges = arrow_ffi::decode_failed_edges_ffi(failed_edges, &self.network)
             .map_err(PyValueError::new_err)?;
+        let inputs = self.paths.for_failed_edges(&failed_edges);
+        let output = core::disrupt_with_preprocessed(
+            &self.network.edges,
+            &inputs.affected_flows,
+            &inputs.current_edge_flows,
+            &inputs.initial_costs_by_od,
+            &failed_edges,
+            capacity_constrained,
+            directed,
+        );
+        let (rerouted_flows, network_flows, isolated_od, losses) =
+            arrow_ffi::disruption_to_ffi(py, &output, &self.network)
+                .map_err(PyValueError::new_err)?;
 
         let result = PyDict::new(py);
         result.set_item("rerouted_flows", rerouted_flows)?;
@@ -125,24 +145,6 @@ fn allocate_ffi<'py>(
     directed: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     PyPreparedNetwork::new(network)?.allocate(py, od, capacity_constrained, directed)
-}
-
-#[pyfunction]
-fn disrupt_ffi<'py>(
-    py: Python<'py>,
-    network: &Bound<'py, PyAny>,
-    od_flows: &Bound<'py, PyAny>,
-    failed_edges: &Bound<'py, PyAny>,
-    capacity_constrained: bool,
-    directed: bool,
-) -> PyResult<Bound<'py, PyDict>> {
-    PyPreparedNetwork::new(network)?.disrupt(
-        py,
-        od_flows,
-        failed_edges,
-        capacity_constrained,
-        directed,
-    )
 }
 
 #[pyfunction]
@@ -171,9 +173,9 @@ fn shortest_paths_from_ffi<'py>(
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_function(wrap_pyfunction!(allocate_ffi, m)?)?;
-    m.add_function(wrap_pyfunction!(disrupt_ffi, m)?)?;
     m.add_function(wrap_pyfunction!(shortest_paths_from_ffi, m)?)?;
     m.add_function(wrap_pyfunction!(skim_ffi, m)?)?;
     m.add_class::<PyPreparedNetwork>()?;
+    m.add_class::<PyPreparedDisruption>()?;
     Ok(())
 }

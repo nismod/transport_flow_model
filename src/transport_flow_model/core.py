@@ -93,9 +93,55 @@ class PreparedNetwork:
         return f"PreparedNetwork(n_links={self.n_links}, n_nodes={self.n_nodes})"
 
 
+class PreparedDisruption:
+    """A network and a baseline path set, both parsed once, for scenario runs.
+
+    Reading the path table is the bulk of a scenario's cost — it is
+    typically far larger than the link table — and none of it depends on
+    which links fail. Preparing once turns a scenario into a scan over
+    already-parsed rows::
+
+        prepared = core.prepare_disruption(links, base_paths)
+        for scenario in scenarios:
+            prepared.scenario(scenario.removed_links)
+    """
+
+    __slots__ = ("_inner",)
+
+    def __init__(
+        self,
+        network: pa.Table | pa.RecordBatch | pd.DataFrame,
+        od_flows: pa.Table | pa.RecordBatch | pd.DataFrame,
+    ):
+        self._inner = _core.PreparedDisruption(_to_table(network), _to_table(od_flows))
+
+    def scenario(
+        self,
+        failed_edges: list[object],
+        *,
+        capacity_constrained: bool = True,
+        directed: bool = True,
+    ) -> dict[str, pa.Table]:
+        """Reroute the baseline flows using any of ``failed_edges``."""
+        result = self._inner.scenario(
+            failed_edges,
+            capacity_constrained,
+            directed,
+        )
+        return {name: _from_ffi_stream(payload) for name, payload in result.items()}
+
+
 def prepare(network: pa.Table | pa.RecordBatch | pd.DataFrame) -> PreparedNetwork:
     """Parse a link table once for reuse across many calls."""
     return PreparedNetwork(network)
+
+
+def prepare_disruption(
+    network: pa.Table | pa.RecordBatch | pd.DataFrame,
+    od_flows: pa.Table | pa.RecordBatch | pd.DataFrame,
+) -> PreparedDisruption:
+    """Parse a network and baseline paths once for a run of scenarios."""
+    return PreparedDisruption(network, od_flows)
 
 
 def allocate(
@@ -122,8 +168,7 @@ def disrupt(
     directed: bool = True,
 ) -> dict[str, pa.Table]:
     """Reroute failed-edge flows"""
-    return prepare(network).disrupt(
-        od_flows,
+    return prepare_disruption(network, od_flows).scenario(
         failed_edges,
         capacity_constrained=capacity_constrained,
         directed=directed,

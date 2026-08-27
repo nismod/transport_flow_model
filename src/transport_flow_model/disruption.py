@@ -165,14 +165,21 @@ def disrupt(
         raise ValueError("base assignment must include paths (include_paths=True)")
 
     links = _links_with_base_flow(network, base)
+    # Parse the network and the baseline paths once: neither depends on which
+    # links a scenario removes, and the path table is usually much the larger
+    # of the two, so re-reading it per scenario dominates a long run.
+    prepared = core.prepare_disruption(links, base.paths)
+    edge_ids = links["edge_id"].combine_chunks()
+    flows = links["flow"]
+
     results = []
     skipped = []
     for scenario in scenarios:
         removed = _removed_links(scenario)
-        if skip_unaffected and not _affects_flow(links, removed):
+        if skip_unaffected and not _affects_flow(edge_ids, flows, removed):
             skipped.append(scenario)
             continue
-        results.append(_evaluate(links, base.paths, scenario, removed, options))
+        results.append(_evaluate(prepared, links, scenario, removed, options))
     return DisruptionResults(
         base=base,
         results=tuple(results),
@@ -182,15 +189,13 @@ def disrupt(
 
 
 def _evaluate(
+    prepared: core.PreparedDisruption,
     links: pa.Table,
-    paths: pa.Table,
     scenario: Scenario,
     removed: list[Any],
     options: Mapping[str, Any],
 ) -> ScenarioResult:
-    result = core.disrupt(
-        links,
-        paths,
+    result = prepared.scenario(
         removed,
         capacity_constrained=bool(options.get("capacity_constrained", True)),
         directed=bool(options.get("directed", True)),
@@ -231,13 +236,16 @@ def _links_with_base_flow(network: Network, base: AssignmentResult) -> pa.Table:
     return link_flows_table(links, base.link_flows.select(["edge_id", "flow"]))
 
 
-def _affects_flow(links: pa.Table, removed: list[Any]) -> bool:
+def _affects_flow(edge_ids: pa.Array, flows: Any, removed: list[Any]) -> bool:
+    """Whether any removed link carries baseline flow.
+
+    Takes the link columns rather than the table so a scenario loop does not
+    re-extract them for every scenario.
+    """
     if not removed:
         return False
-    mask = pc.is_in(
-        links["edge_id"], value_set=pa.array(removed, type=links["edge_id"].type)
-    )
-    affected = pc.sum(pc.filter(links["flow"], mask)).as_py()
+    mask = pc.is_in(edge_ids, value_set=pa.array(removed, type=edge_ids.type))
+    affected = pc.sum(pc.filter(flows, mask)).as_py()
     return bool(affected and affected > 0)
 
 

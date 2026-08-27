@@ -378,3 +378,80 @@ def test_skim_undirected_uses_links_both_ways():
     pairs = pd.DataFrame({"origin_id": ["B"], "destination_id": ["A"]})
     assert core.skim(network, pairs, directed=True)["cost"].to_pylist() == [None]
     assert core.skim(network, pairs, directed=False)["cost"].to_pylist() == [7.0]
+
+
+def test_prepared_disruption_matches_the_unprepared_call():
+    network = pd.DataFrame(
+        {
+            "edge_from": ["A", "B", "A"],
+            "edge_to": ["B", "C", "C"],
+            "edge_id": ["AB", "BC", "AC"],
+            "cost": [1.0, 1.0, 5.0],
+            "capacity": [100.0, 100.0, 100.0],
+        }
+    )
+    od_flows = pd.DataFrame(
+        {
+            "origin_id": ["A"],
+            "destination_id": ["C"],
+            "flow": [10.0],
+            "edge_path": [["AB", "BC"]],
+            "cost": [2.0],
+        }
+    )
+    prepared = core.prepare_disruption(network, od_flows)
+    for failed in (["AB"], [], ["AB", "BC"]):
+        assert prepared.scenario(failed) == core.disrupt(network, od_flows, failed)
+
+
+def test_prepared_disruption_is_reusable_across_scenarios():
+    """Each scenario is independent of the ones before it."""
+    network = pd.DataFrame(
+        {
+            "edge_from": ["A", "B", "A"],
+            "edge_to": ["B", "C", "C"],
+            "edge_id": ["AB", "BC", "AC"],
+            "cost": [1.0, 1.0, 5.0],
+            "capacity": [100.0, 100.0, 100.0],
+        }
+    )
+    od_flows = pd.DataFrame(
+        {
+            "origin_id": ["A"],
+            "destination_id": ["C"],
+            "flow": [10.0],
+            "edge_path": [["AB", "BC"]],
+            "cost": [2.0],
+        }
+    )
+    prepared = core.prepare_disruption(network, od_flows)
+
+    # An unaffected scenario in between must not disturb the answers.
+    first = prepared.scenario(["AB"])
+    prepared.scenario(["AC"])
+    assert prepared.scenario(["AB"]) == first
+
+    # AB gone, so the flow reroutes onto the direct link at cost 5.
+    assert first["rerouted_flows"]["cost"].to_pylist() == [5.0]
+    assert first["rerouted_flows"]["edge_path"].to_pylist() == [["AC"]]
+
+
+def test_prepared_disruption_rejects_unknown_edge_path_ids():
+    network = pd.DataFrame(
+        {
+            "edge_from": ["A", "B"],
+            "edge_to": ["B", "C"],
+            "edge_id": ["AB", "BC"],
+        }
+    )
+    od_flows = pd.DataFrame(
+        {
+            "origin_id": ["A"],
+            "destination_id": ["C"],
+            "flow": [1.0],
+            "edge_path": [["AB", "missing"]],
+            "cost": [2.0],
+        }
+    )
+    with pytest.raises(ValueError, match="unknown edge_id"):
+        core.prepare_disruption(network, od_flows)

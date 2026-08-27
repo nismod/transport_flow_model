@@ -19,7 +19,7 @@ Everything is under `src/transport_flow_model/`.
 | `assignment.py` | `assign()`, the `METHODS` registry and `register_method`; the `"sequential"` backend; reserved stubs for `"msa"`, `"fw"`, `"bfw"`, `"staq"`; `AssignmentResult` and `Provenance`. |
 | `convergence.py` | `relative_gap()` (convergence measure) and `link_costs()` (the BPR volume-delay function, currently hardcoded here). |
 | `disruption.py` | `disrupt()`, `Scenario`, `LinkDelta`, `ScenarioResult`, `DisruptionResults`. |
-| `core.py` | The only module that imports the Rust extension `_core`. Wraps `allocate()`, `disrupt()`, `skim()`, `shortest_paths_from()`, `prepare()`, `version()`. |
+| `core.py` | The only module that imports the Rust extension `_core`. Wraps `allocate()`, `disrupt()`, `skim()`, `shortest_paths_from()`, `prepare()`, `prepare_disruption()`, `version()`. |
 | `datasets.py` | Registry of benchmark datasets with checksums and cached downloads; `BEST_KNOWN` published objective values and equilibrium flows. |
 | `io.py` | TNTP readers (`read_tntp`, `read_tntp_flows`, `TNTPInstance`). |
 | `config.py` | `RunConfig`, a pydantic schema for JSON run configs, mapping 1:1 onto the API. |
@@ -59,8 +59,9 @@ RunConfig ──load_network()──▶ Network ─┐
 
 `assign()` looks the method name up in `METHODS`, times the backend call, and
 wraps the returned dict into an `AssignmentResult` with `Provenance` attached.
-`disrupt()` runs a baseline assignment (or takes one), then for each scenario
-reroutes the baseline flows whose paths use a removed link.
+`disrupt()` runs a baseline assignment (or takes one), prepares the network and
+the baseline paths once, then for each scenario reroutes the baseline flows
+whose paths use a removed link.
 
 `relative_gap(network, demand, flows)` is a post-hoc quality measure, not part
 of the pipeline: it recomputes congested link costs, skims the least-cost time
@@ -84,10 +85,11 @@ serialization, no buffer copy.
 | Python | Rust | Returns |
 | --- | --- | --- |
 | `core.allocate(network, od, capacity_constrained=, directed=)` | `allocate_ffi` | `od_flows`, `network_flows`, `unassigned_od` |
-| `core.disrupt(network, od_flows, failed_edges, capacity_constrained=, directed=)` | `disrupt_ffi` | `rerouted_flows`, `network_flows`, `isolated_od`, `losses` |
+| `core.disrupt(network, od_flows, failed_edges, capacity_constrained=, directed=)` | `PreparedDisruption` | `rerouted_flows`, `network_flows`, `isolated_od`, `losses` |
 | `core.skim(network, od_pairs, directed=)` | `skim_ffi` | one table: `origin_id`, `destination_id`, `cost` (null if unreachable) |
 | `core.shortest_paths_from(network, origin, directed=)` | `shortest_paths_from_ffi` | one table: `node_id`, `cost` |
-| `core.prepare(network)` | `PreparedNetwork` | a handle with `allocate`, `disrupt` and `skim` methods |
+| `core.prepare(network)` | `PreparedNetwork` | a handle with `allocate` and `skim` methods |
+| `core.prepare_disruption(network, od_flows)` | `PreparedDisruption` | a handle with a `scenario(failed_edges)` method |
 | `core.version()` | `version` | extension version string |
 
 No other module may import `_core`; see
@@ -105,8 +107,9 @@ extension is required, not optional: `import transport_flow_model` reaches
   is
   [ADR-0001](docs/adr/0001-assignment-methods-are-registered-backends.md).
 - **A batched query across the boundary** — `core.skim(network, od_pairs)`
-  returns least-cost travel time per OD pair, and `core.prepare(links)` returns
-  a handle with `allocate`, `disrupt` and `skim` methods that reuse one parse.
+  returns least-cost travel time per OD pair; `core.prepare(links)` and
+  `core.prepare_disruption(links, paths)` return handles whose methods reuse
+  one parse.
 - **A new benchmark dataset** is an entry in `datasets.DATASETS` (URL,
   checksum, licence, provenance), optionally with a `BEST_KNOWN` published
   objective for validation.
@@ -166,10 +169,21 @@ one tree per distinct origin, and costs roughly 0.3-0.5x an all-or-nothing
 pass — cheap enough to check every iteration. See the module docstring of
 `convergence.py` for the measured numbers.
 
-That is a recent change, and the general lesson is in `ADR-0002`: **batch calls
-across the FFI boundary**. Every `core` function parses its inputs and rebuilds
-the graph before doing any work, which on chicago-sketch is 85% of a
-`shortest_paths_from` call. A Python loop calling one of them per origin or per
-scenario pays that every iteration; `relative_gap` did, and dropped tenfold when
-it stopped. Where a batch is not natural, `core.prepare(links)` parses once and
-returns a handle whose methods reuse it.
+That is a recent change, and the general lesson is in `ADR-0002`: **do not put
+a `core` call inside a Python loop without thinking about what it re-parses**.
+Every `core` function parses its inputs and rebuilds the graph before doing any
+work — on chicago-sketch, 85% of a `shortest_paths_from` call. Two loops used
+to pay that per iteration:
+
+| loop | before | after | how |
+| --- | --- | --- | --- |
+| `relative_gap` over origins | 0.47 s | 0.046 s | one batched `core.skim` |
+| `disrupt` per scenario | 72 ms | 2.3 ms | `core.prepare_disruption` once |
+
+Batch the call where a batch is natural; where it is not, parse once with
+`core.prepare` or `core.prepare_disruption` and call methods on the handle.
+
+Remaining headroom in the scenario loop: `PreparedDisruption.scenario` scans
+every parsed path row to find the affected ones, so a no-op scenario still
+costs 2.1 ms of the 2.3 ms on chicago-sketch's 93k paths. An index from link to
+the paths using it would make that proportional to the flow actually affected.

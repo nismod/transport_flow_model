@@ -342,11 +342,6 @@ pub struct PreparedDemands {
     pub demands: Vec<Demand>,
 }
 
-pub struct PreparedOdFlows {
-    pub inputs: DisruptionInputs,
-    pub failed_edges: Vec<usize>,
-}
-
 pub struct DisruptionInputs {
     pub affected_flows: Vec<OdFlow>,
     pub current_edge_flows: Vec<f64>,
@@ -431,18 +426,19 @@ pub fn prepare_demands_ffi(
     prepare_demands_batches(&batches, network)
 }
 
-pub fn prepare_od_flows_ffi(
+pub fn prepare_od_paths_ffi(
     table: &Bound<'_, PyAny>,
-    failed_edges: &Bound<'_, PyAny>,
     network: &mut PreparedNetwork,
-) -> Result<PreparedOdFlows, String> {
-    let failed_edges = decode_failed_edges(failed_edges, network)?;
+) -> Result<PreparedOdPaths, String> {
     let batches = read_batches_from_pyarrow_table(table)?;
-    let inputs = prepare_disruption_inputs_batches(&batches, &failed_edges, network)?;
-    Ok(PreparedOdFlows {
-        inputs,
-        failed_edges,
-    })
+    prepare_od_paths_batches(&batches, network)
+}
+
+pub fn decode_failed_edges_ffi(
+    failed_edges: &Bound<'_, PyAny>,
+    network: &PreparedNetwork,
+) -> Result<Vec<usize>, String> {
+    decode_failed_edges(failed_edges, network)
 }
 
 pub fn prepare_skim_pairs_ffi(
@@ -604,19 +600,58 @@ fn prepare_skim_pairs_batches(
     Ok(pairs)
 }
 
-fn prepare_disruption_inputs_batches(
-    batches: &[RecordBatch],
-    failed_edges: &[usize],
-    network: &mut PreparedNetwork,
-) -> Result<DisruptionInputs, String> {
-    let mut failed_edge_flags = vec![false; network.edge_ids.len().max(1)];
-    for edge_id in failed_edges {
-        failed_edge_flags[*edge_id] = true;
-    }
+/// Baseline OD paths parsed once, for reuse across disruption scenarios.
+///
+/// Reading a path table is the bulk of a scenario's cost — it is typically
+/// far larger than the link table — and none of it depends on which links
+/// fail. Only [`Self::for_failed_edges`] does, and that is a scan over
+/// already-parsed rows.
+pub struct PreparedOdPaths {
+    flows: Vec<OdFlow>,
+    /// Baseline flow per link, summed over every path. Scenario-independent.
+    current_edge_flows: Vec<f64>,
+}
 
+impl PreparedOdPaths {
+    /// The disruption inputs for one set of failed links.
+    pub fn for_failed_edges(&self, failed_edges: &[usize]) -> DisruptionInputs {
+        let mut failed_edge_flags = vec![false; self.current_edge_flows.len().max(1)];
+        for edge_id in failed_edges {
+            failed_edge_flags[*edge_id] = true;
+        }
+
+        let mut affected_flows = Vec::new();
+        let mut initial_costs_by_od: BTreeMap<(usize, usize), f64> = BTreeMap::new();
+        for flow in &self.flows {
+            let is_affected = flow
+                .edge_path
+                .iter()
+                .any(|edge_id| failed_edge_flags[*edge_id]);
+            if is_affected {
+                *initial_costs_by_od
+                    .entry((flow.origin, flow.destination))
+                    .or_insert(0.0) += flow.cost;
+                affected_flows.push(flow.clone());
+            }
+        }
+
+        DisruptionInputs {
+            affected_flows,
+            current_edge_flows: self.current_edge_flows.clone(),
+            initial_costs_by_od: initial_costs_by_od
+                .into_iter()
+                .map(|((origin, destination), cost)| (origin, destination, cost))
+                .collect(),
+        }
+    }
+}
+
+fn prepare_od_paths_batches(
+    batches: &[RecordBatch],
+    network: &mut PreparedNetwork,
+) -> Result<PreparedOdPaths, String> {
     let mut current_edge_flows = vec![0.0; network.edge_ids.len()];
-    let mut affected_flows = Vec::new();
-    let mut initial_costs_by_od: BTreeMap<(usize, usize), f64> = BTreeMap::new();
+    let mut flows = Vec::with_capacity(batches.iter().map(RecordBatch::num_rows).sum());
 
     for batch in batches {
         let origins = id_column(batch, "origin_id")?;
@@ -630,48 +665,33 @@ fn prepare_disruption_inputs_batches(
         )?;
         let edge_paths = required_column(batch, "edge_path")?;
         ensure_edge_path_kind(edge_paths.as_ref(), network.edge_kind)?;
-        let flows = NumericColumn::required(batch, "flow")?;
-        let costs = NumericColumn::required(batch, "cost")?;
+        let flow_column = NumericColumn::required(batch, "flow")?;
+        let cost_column = NumericColumn::required(batch, "cost")?;
 
         for row in 0..batch.num_rows() {
             let origin = network.intern_node_id(origins.value("origin_id", row)?);
             let destination = network.intern_node_id(destinations.value("destination_id", row)?);
-            let flow = flows.value("flow", row)?;
-            let cost = costs.value("cost", row)?;
+            let flow = flow_column.value("flow", row)?;
+            let cost = cost_column.value("cost", row)?;
             let edge_path = external_edge_path_value(edge_paths.as_ref(), row, network)?;
 
-            let mut is_affected = false;
             for edge_id in &edge_path {
                 current_edge_flows[*edge_id] += flow;
-                if failed_edge_flags[*edge_id] {
-                    is_affected = true;
-                }
             }
 
-            if is_affected {
-                *initial_costs_by_od
-                    .entry((origin, destination))
-                    .or_insert(0.0) += cost;
-                affected_flows.push(OdFlow {
-                    origin,
-                    destination,
-                    flow,
-                    edge_path,
-                    cost,
-                });
-            }
+            flows.push(OdFlow {
+                origin,
+                destination,
+                flow,
+                edge_path,
+                cost,
+            });
         }
     }
 
-    let initial_costs_by_od = initial_costs_by_od
-        .into_iter()
-        .map(|((origin, destination), cost)| (origin, destination, cost))
-        .collect::<Vec<_>>();
-
-    Ok(DisruptionInputs {
-        affected_flows,
+    Ok(PreparedOdPaths {
+        flows,
         current_edge_flows,
-        initial_costs_by_od,
     })
 }
 
@@ -1547,7 +1567,8 @@ mod tests {
         )
         .unwrap();
 
-        let inputs = prepare_disruption_inputs_batches(&[batch], &[1], &mut network).unwrap();
+        let paths = prepare_od_paths_batches(&[batch], &mut network).unwrap();
+        let inputs = paths.for_failed_edges(&[1]);
 
         assert_eq!(inputs.current_edge_flows, vec![0.0, 7.0, 7.0]);
         assert_eq!(inputs.affected_flows[0].edge_path, vec![1, 2]);
