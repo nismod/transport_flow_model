@@ -97,9 +97,13 @@ def test_column_override(config_file, tmp_path):
 
 
 def test_repository_configs_validate():
-    for name in ("config.example.json", "config.west_yorkshire.json"):
-        config = RunConfig.from_json(name)
-        assert config.paths.data.exists()
+    name = "config.example.json"
+    config = RunConfig.from_json(name)
+    assert config.paths.data.exists()
+
+    name = "config.west_yorkshire.json"
+    config = RunConfig.from_json(name)
+    # skip checking path exists, as it depends on running benchmark prep
 
 
 def test_load_config_deprecated(config_file):
