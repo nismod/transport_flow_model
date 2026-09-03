@@ -40,7 +40,7 @@ jobs:
           python -m venv .venv-ci
           . .venv-ci/bin/activate
           echo "$PWD/.venv-ci/bin" >> "$GITHUB_PATH"
-          pip install --group dev -e .
+          pip install -e .[dev]
           maturin develop --release
 
       - name: Restore performance baseline

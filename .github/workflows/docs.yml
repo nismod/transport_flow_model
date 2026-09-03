@@ -27,7 +27,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install package and documentation dependencies
-        run: pip install --group doc .
+        run: pip install .[doc]
 
       - name: Build Sphinx documentation
         working-directory: docs
