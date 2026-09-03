@@ -14,11 +14,13 @@ dependencies = ["igraph", "geopandas", "pandas", "pyarrow", "pydantic>=2", "tqdm
 dev = [
     "pytest",
     "pytest-cov",
-    "ruff>=0.15.14,<0.16",
+    "ruff",
     "osmnx>=2.0.0,<3",
     "py-spy>=0.4.2,<0.5",
-    "maturin>=1.9,<2"
-, "pyinstrument>=5.1.2,<6", "matplotlib>=3.8"]
+    "maturin>=1.9,<2",
+    "pyinstrument>=5.1.2,<6",
+    "matplotlib>=3.8"
+]
 doc = ["sphinx", "pydata-sphinx-theme"]
 
 [build-system]
