@@ -11,7 +11,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
 
-import transport_flow_model.core as core
+from transport_flow_model import core
 
 FLOW_COLUMNS = ("origin_id", "destination_id", "flow")
 OD_FLOW_COLUMNS = ("origin_id", "destination_id", "flow", "edge_path", "cost")

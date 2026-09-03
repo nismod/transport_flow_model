@@ -9,9 +9,10 @@ instances.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Mapping, NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 import pandas as pd

@@ -5,7 +5,7 @@ from math import inf
 import pandas as pd
 import pyarrow as pa
 
-import transport_flow_model.core as core
+from transport_flow_model import core
 
 
 class RadiationModel:

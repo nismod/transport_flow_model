@@ -1,9 +1,4 @@
-"""Transport flow model: network assignment and disruption analysis.
-
-The public v0 API is the set of names exported here. Legacy classes remain
-importable from :mod:`transport_flow_model.model` but are deprecated; see
-the changelog and the versioning policy in the documentation.
-"""
+"""Transport flow model: network assignment and disruption analysis."""
 
 from .assignment import AssignmentResult, Provenance, assign
 from .config import RunConfig, load_config

@@ -10,16 +10,17 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.compute as pc
 
 from transport_flow_model import core
 from transport_flow_model.assignment import (
-    AssignmentResult,
     PATH_COLUMNS,
+    AssignmentResult,
     assign,
     coerce_integral,
     link_flows_table,

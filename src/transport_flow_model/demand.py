@@ -10,7 +10,8 @@ alongside the node-level ids.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import pandas as pd
 import pyarrow as pa
