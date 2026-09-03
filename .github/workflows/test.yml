@@ -48,4 +48,4 @@ jobs:
         run: ruff check
 
       - name: Run tests
-        run: python -m pytest --cov=transport_flow_model --cov-report=term-missing tests
+        run: python -m pytest --cov=transport_flow_model --cov-report=term-missing -n 2 tests
