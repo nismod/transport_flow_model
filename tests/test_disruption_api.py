@@ -11,7 +11,8 @@ from transport_flow_model import (
     assign,
     disrupt,
 )
-from transport_flow_model.model import Network as LegacyNetwork, ODFlows
+from transport_flow_model.model import Network as LegacyNetwork
+from transport_flow_model.model import ODFlows
 
 
 @pytest.fixture

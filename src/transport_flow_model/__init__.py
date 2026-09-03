@@ -1,5 +1,6 @@
 """Transport flow model: network assignment and disruption analysis."""
 
+from . import datasets, io
 from .assignment import AssignmentResult, Provenance, assign
 from .config import RunConfig, load_config
 from .convergence import link_costs, relative_gap
@@ -14,7 +15,6 @@ from .disruption import (
 from .model import compute_losses
 from .network import Network
 from .radiation import RadiationModel
-from . import datasets, io
 
 try:
     from ._version import __version__

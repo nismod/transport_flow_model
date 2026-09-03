@@ -9,7 +9,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = REPO_ROOT / "config.west_yorkshire.json"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "profile_results"

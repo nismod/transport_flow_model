@@ -14,7 +14,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ALLOCATION_SCRIPT = REPO_ROOT / "scripts" / "flow_model" / "flow_allocation.py"
 DISRUPTION_SCRIPT = REPO_ROOT / "scripts" / "flow_model" / "flow_disruptions.py"

@@ -15,7 +15,7 @@ def main(config: RunConfig):
     results_folder = config.paths.results / "flow_od_paths"
     results_folder.mkdir(parents=True, exist_ok=True)
 
-    logging.info("assign (method=%s)", config.assignment.method)
+    logger.info("assign (method=%s)", config.assignment.method)
     result = assign(
         config.load_network(),
         config.load_demand(),
@@ -24,7 +24,7 @@ def main(config: RunConfig):
         **config.assignment.options(),
     )
 
-    logging.info("Writing results to %s", results_folder)
+    logger.info("Writing results to %s", results_folder)
     result.link_flows.to_pandas().to_csv(
         results_folder / "network_edge_total_flows.csv", index=False
     )
@@ -40,7 +40,8 @@ if __name__ == "__main__":
     logging.basicConfig(
         format="%(asctime)s %(process)d %(filename)s %(message)s", level=logging.INFO
     )
-    logging.info("Start flow_allocation.py")
+    logger = logging.getLogger(__name__)
+    logger.info("Start flow_allocation.py")
     parser = argparse.ArgumentParser(
         prog="flow_allocation",
         description="Allocate origin-destination flows to a network",
@@ -48,4 +49,4 @@ if __name__ == "__main__":
     parser.add_argument("config", help="Path to config.json")
     args = parser.parse_args()
     main(RunConfig.from_json(args.config))
-    logging.info("Done.")
+    logger.info("Done.")

@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import pytest
 
-from transport_flow_model.model import Network, OD, ODFlows
+from transport_flow_model.model import OD, Network, ODFlows
 
 
 def test_network_from_csv_renames(tmp_path):

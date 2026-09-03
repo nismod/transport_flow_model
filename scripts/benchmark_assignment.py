@@ -223,9 +223,15 @@ def run_case(case: dict) -> dict:
     """Measure one (instance, method) case; runs inside the subprocess."""
     import resource
 
-    from transport_flow_model import Demand, Network, assign, datasets, relative_gap
+    from transport_flow_model import (
+        Demand,
+        Network,
+        assign,
+        core,
+        datasets,
+        relative_gap,
+    )
     from transport_flow_model._version import __version__
-    from transport_flow_model import core
 
     instance = datasets.load_tntp(case["instance"])
     network = Network.from_tntp(instance)
@@ -370,8 +376,7 @@ def write_outputs(measurements: list[dict], summary: dict, output_dir: Path) -> 
 def render_report(summary: dict) -> str:
     """Markdown table comparing methods/backends per instance."""
     lines = [
-        "| instance | method | threads | iterations | relative gap "
-        "| wall time (s) | peak RSS (MiB) |",
+        "| instance | method | threads | iterations | relative gap | wall time (s) | peak RSS (MiB) |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for case in summary["cases"].values():

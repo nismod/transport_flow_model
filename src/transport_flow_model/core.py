@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-
 import pandas as pd
 import pyarrow as pa
 
-import transport_flow_model._core as _core
+from transport_flow_model import _core
 
 
 def version() -> str:

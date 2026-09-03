@@ -3,7 +3,7 @@ from dataclasses import is_dataclass
 import pandas as pd
 
 from transport_flow_model import model
-from transport_flow_model.model import Network, OD, ODFlows
+from transport_flow_model.model import OD, Network, ODFlows
 
 
 def _edge_flow_map(network_flows):

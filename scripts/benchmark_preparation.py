@@ -10,9 +10,8 @@ import geopandas as gpd
 import osmnx as ox
 import pandas as pd
 
-from transport_flow_model.model import Network, OD
+from transport_flow_model.model import OD, Network
 from transport_flow_model.radiation import RadiationModel
-
 
 DEFAULT_PLACE = "West Yorkshire, England, United Kingdom"
 DEFAULT_OUTPUT_DIR = Path("benchmark_data") / "west_yorkshire"

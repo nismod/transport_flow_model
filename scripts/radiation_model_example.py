@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# coding: utf-8
 """Example usage of the RadiationModel for OD estimation."""
 
 import pandas as pd

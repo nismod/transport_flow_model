@@ -2,7 +2,8 @@ import pandas as pd
 import pytest
 
 from transport_flow_model import Demand, Network, assign
-from transport_flow_model.model import Network as LegacyNetwork, OD
+from transport_flow_model.model import OD
+from transport_flow_model.model import Network as LegacyNetwork
 
 
 @pytest.fixture
