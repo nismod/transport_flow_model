@@ -5,15 +5,13 @@ name: perf
 # - perf: on every PR and push to main, runs the small (vendored) instances
 #   and fails on >20% median wall-time slowdown or relative-gap regression
 #   against the baseline recorded from the latest main build.
-# - perf-nightly: downloads and runs the large instances on a schedule,
+# - perf-nightly: downloads and runs the large instances on demand,
 #   publishing the parquet results and gap-vs-time plots as artifacts.
 
 on:
   push:
     branches: ["main"]
   pull_request:
-  schedule:
-    - cron: "42 2 * * *"
   workflow_dispatch:
 
 jobs:
@@ -100,15 +98,21 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install package, dev dependencies and Rust extension
         run: |
           python -m venv .venv-ci
           . .venv-ci/bin/activate
           echo "$PWD/.venv-ci/bin" >> "$GITHUB_PATH"
-          pip install --group dev -e .
+          pip install -e .[dev]
           maturin develop --release
 
       - name: Cache benchmark datasets
