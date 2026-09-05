@@ -28,8 +28,7 @@ accident, and neither was written down:
 
 (Note for readers of older docs: `docs/source/development.rst` described this
 as "Arrow IPC streams" through `core.allocate_arrow` / `core.disrupt_arrow`.
-Both statements are out of date; the functions are `core.allocate`,
-`core.disrupt` and `core.shortest_paths_from`.)
+Both statements are out of date; see `core.py` for the current wrappers.)
 
 A later measurement added a third property the record has to account for.
 Every call across the boundary parses its Arrow inputs, interns identifiers and
@@ -56,8 +55,10 @@ import `_core`.**
   accepts a `DataFrame` for convenience. Those are conversion points, not
   processing.
 - New extension entry points are added as thin wrappers in `core.py` following
-  the existing shape: normalize inputs with `_to_table`, call `_core.<name>_ffi`,
-  import the returned capsule(s) with `_from_ffi_stream`.
+  the existing shape: normalize inputs with `_to_table`, call into `_core`,
+  import the returned capsule(s) with `_from_ffi_stream`. A wrapper calls
+  either a `_core.<name>_ffi` function or a method on one of the handles
+  below.
 
 Parsed state may be cached behind an opaque handle, under three conditions:
 
