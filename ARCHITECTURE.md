@@ -16,7 +16,7 @@ Everything is under `src/transport_flow_model/`.
 | --- | --- |
 | `network.py` | `Network`: immutable topology plus per-link attributes as a `pyarrow.Table`; node factorization and lazily built CSR adjacency; builders from (geo)pandas, pyarrow and TNTP. |
 | `demand.py` | `Demand`: OD demand in COO form (one row per pair), with a TNTP builder that tracks zone-to-node mapping for split centroids. |
-| `assignment.py` | `assign()`, the `METHODS` registry and `register_method`; the `"sequential"` backend; reserved stubs for `"msa"`, `"fw"`, `"bfw"`, `"staq"`; `AssignmentResult` and `Provenance`. |
+| `assignment.py` | `assign()`, the `METHODS` registry and `register_method`; the `"sequential"` and `"msa"` backends; reserved stubs for `"fw"`, `"bfw"`, `"staq"`; `AssignmentResult` and `Provenance`. |
 | `costs.py` | Link cost (volume-delay) functions: the `CostFunction` protocol, `BPR` (travel time, integral, derivative) and `beckmann_objective()`. |
 | `convergence.py` | `relative_gap()` (convergence measure) and `link_costs()`, which evaluates the network's `BPR` cost function. |
 | `disruption.py` | `disrupt()`, `Scenario`, `LinkDelta`, `ScenarioResult`, `DisruptionResults`. |
@@ -67,8 +67,14 @@ whose paths use a removed link.
 `relative_gap(network, demand, flows)` is a post-hoc quality measure, not part
 of the pipeline: it recomputes congested link costs, skims the least-cost time
 for every OD pair, and returns how far total travel time exceeds
-shortest-path travel time. Iterative methods will also call it internally to
-decide when to stop.
+shortest-path travel time.
+
+An iterative method does not need it. `"msa"` performs an all-or-nothing load
+every iteration anyway, and that load puts every OD pair on its min-cost path,
+so it already contains the shortest-path term: the gap is
+`dot(t, x) / dot(t, y) - 1` for current flows `x` and the new load `y`, at no
+extra cost. `relative_gap` is what an outside caller uses to check a solution
+it did not produce.
 
 Entry points: `scripts/flow_model/flow_allocation.py` and
 `scripts/flow_model/flow_disruptions.py` (config-driven runs),
@@ -103,9 +109,9 @@ extension is required, not optional: `import transport_flow_model` reaches
 - **A new assignment method** is a function registered into `METHODS` with
   `@register_method("name")`. It receives
   `(network, demand, include_paths=..., **options)` and returns a dict; it
-  never builds an `AssignmentResult` itself. The reserved names `"msa"`,
-  `"fw"`, `"bfw"` and `"staq"` are filled in, not renamed. The full contract
-  is
+  never builds an `AssignmentResult` itself. The reserved names `"fw"`,
+  `"bfw"` and `"staq"` are filled in, not renamed — `"msa"` is the worked
+  example of having done so. The full contract is
   [ADR-0001](docs/adr/0001-assignment-methods-are-registered-backends.md).
 - **A batched query across the boundary** — `core.skim(network, od_pairs)`
   returns least-cost travel time per OD pair; `core.prepare(links)` and

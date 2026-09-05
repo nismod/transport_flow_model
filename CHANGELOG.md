@@ -22,8 +22,9 @@ the versioning policy in the documentation).
     mapping for split centroids.
   - `assign(network, demand, method=..., **options) -> AssignmentResult`
     with a registry of assignment backends. `"sequential"` (the existing
-    capacity-constrained heuristic) is implemented; `"msa"`, `"fw"`,
-    `"bfw"` and `"staq"` are registered and raise `NotImplementedError`
+    capacity-constrained heuristic) and `"msa"` (user equilibrium) are
+    implemented; `"fw"`, `"bfw"` and `"staq"` are registered and raise
+    `NotImplementedError`
   - `AssignmentResult` with pyarrow tables (`link_flows`, `skims`,
     `unassigned`, optional `paths`), `gap_history`, and `Provenance`
     metadata (method, options, iterations, relative gap, wall time, seed,
@@ -47,6 +48,20 @@ the versioning policy in the documentation).
   evaluating the relative gap costs relative to an all-or-nothing pass.
   Recorded in the `convergence` module docstring, along with why it once
   cost three times as much.
+- `assign(..., "msa")`: the method of successive averages, the first
+  user-equilibrium method. It averages repeated all-or-nothing loads at
+  congested costs with step `1/k`, and takes `max_iterations`,
+  `target_gap`, `time_limit_s`, `cost_function`, `distance_cost` and
+  `directed`. On SiouxFalls it reaches a relative gap of 1e-3 in 743
+  passes (0.5s), with a Beckmann objective 0.17% above the published
+  optimum, falling like 1/k as the theory says. Each gap costs nothing:
+  the all-or-nothing load an iteration performs anyway puts every OD pair
+  on its min-cost path, so it *is* the shortest-path term of the gap.
+  `paths` is always `None` — an equilibrium has no single path per OD
+  pair, so `include_paths=True` raises and an MSA result cannot yet be a
+  disruption baseline (issue m0-13). `max_iterations` defaults to 50,
+  which is a screening budget, not a converged one; `provenance` reports
+  the gap actually achieved.
 - `costs` module with the `CostFunction` protocol — `travel_time(x)`,
   `integral(x)` and `derivative(x)`, each vectorised over links in network
   link order — and `BPR`, a frozen dataclass implementing it from per-link

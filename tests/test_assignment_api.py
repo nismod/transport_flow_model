@@ -98,7 +98,7 @@ def test_unknown_method_raises(links, od):
         assign(Network(links), Demand(od), "nope")
 
 
-@pytest.mark.parametrize("method", ["msa", "fw", "bfw", "staq"])
+@pytest.mark.parametrize("method", ["fw", "bfw", "staq"])
 def test_planned_methods_not_implemented(links, od, method):
     with pytest.raises(NotImplementedError, match=method):
         assign(Network(links), Demand(od), method)

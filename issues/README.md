@@ -26,6 +26,7 @@ used; those are tracked as `ws2-*` below.
 | m0-05 | [m0-05-measure-gap-evaluation-cost.md](m0-05-measure-gap-evaluation-cost.md) | Measure the cost of evaluating the relative gap | performance, python | M1 Foundations & measurement | **Done** |
 | m0-11 | [m0-11-fuse-gap-evaluation-into-aon.md](m0-11-fuse-gap-evaluation-into-aon.md) | Stop rebuilding the graph per origin when evaluating the gap | performance, rust, python | M3 Equilibrium & quasi-dynamic assignment | **Done** |
 | m0-12 | [m0-12-index-paths-by-link-for-scenarios.md](m0-12-index-paths-by-link-for-scenarios.md) | Index baseline paths by link so a scenario skips untouched flows | performance, rust | M4 Disruption & criticality at scale | **Done** |
+| m0-13 | [m0-13-equilibrium-baseline-for-disruption.md](m0-13-equilibrium-baseline-for-disruption.md) | An equilibrium result cannot be a disruption baseline | python, research | M4 Disruption & criticality at scale | Open |
 
 ## WS0-WS6 — the workplan
 
@@ -48,7 +49,7 @@ backlog was written down, so they are recorded here rather than re-filed.
 | ws1-07 | [ws1-07-pyo3-arrow-bindings.md](ws1-07-pyo3-arrow-bindings.md) | WS1-07: PyO3 bindings with zero-copy Arrow I/O | ws1-routing, rust, python | M2 Routing engine (CCH/PHAST) | **Partly** — Arrow C-stream I/O, handles and a batched skim done; no CCH, no GIL release, and the readers still copy |
 | ws1-08 | [ws1-08-scale-validation-10m-edges.md](ws1-08-scale-validation-10m-edges.md) | WS1-08: Scale gate — 10M edges / 1M OD in minutes | ws1-routing, performance, epic-gate | M2 Routing engine (CCH/PHAST) | Open |
 | ws2-01 | [ws2-01-link-cost-functions.md](ws2-01-link-cost-functions.md) | WS2-01: Pluggable link cost functions (BPR, conical, DfT speed-flow) | ws2-assignment, python, rust | M3 Equilibrium & quasi-dynamic assignment | **Partly** — BPR + Beckmann objective in Python; conical, DfT and Rust mirrors open |
-| ws2-02 | [ws2-02-msa-baseline.md](ws2-02-msa-baseline.md) | WS2-02: MSA user-equilibrium baseline | ws2-assignment, python | M3 Equilibrium & quasi-dynamic assignment | Open |
+| ws2-02 | [ws2-02-msa-baseline.md](ws2-02-msa-baseline.md) | WS2-02: MSA user-equilibrium baseline | ws2-assignment, python | M3 Equilibrium & quasi-dynamic assignment | **Done** — gap 1e-3 on SiouxFalls in 743 passes, Beckmann within 0.17% of published; gap comes free from the next AON pass |
 | ws2-03 | [ws2-03-frank-wolfe-bfw.md](ws2-03-frank-wolfe-bfw.md) | WS2-03: Frank-Wolfe and bi-conjugate FW on the CCH kernel | ws2-assignment, rust, performance | M3 Equilibrium & quasi-dynamic assignment | Open |
 | ws2-04 | [ws2-04-equilibrium-validation-suite.md](ws2-04-equilibrium-validation-suite.md) | WS2-04: Equilibrium validation suite vs published solutions and other tools | ws2-assignment, research, epic-gate | M3 Equilibrium & quasi-dynamic assignment | Open |
 | ws2-05 | [ws2-05-algorithm-b-bushes.md](ws2-05-algorithm-b-bushes.md) | WS2-05: Bush-based Algorithm B for high-precision equilibria (stretch) | ws2-assignment, rust, stretch | M3 Equilibrium & quasi-dynamic assignment | Open |

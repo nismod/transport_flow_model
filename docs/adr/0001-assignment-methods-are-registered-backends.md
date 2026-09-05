@@ -88,10 +88,17 @@ The core extension always emits `flow` as `float64`, so opting out is stably
 
 ### Reserved names are filled in, not renamed
 
-`METHODS` already contains `"msa"`, `"fw"`, `"bfw"` and `"staq"`, registered to
-stubs that raise `NotImplementedError` naming the workplan issue. Implementing
-one means replacing its `METHODS[name] = _not_implemented(...)` line with a
+`METHODS` reserves `"fw"`, `"bfw"` and `"staq"`, registered to stubs that raise
+`NotImplementedError` naming the workplan issue. Implementing one means
+replacing its `METHODS[name] = _not_implemented(...)` line with a
 `@register_method(name)` function under the same name.
+
+`"msa"` has been through this and is the worked example: the stub line went,
+`_assign_msa` took its place under `@register_method("msa")`, and the only
+edit outside `assignment.py` was dropping `"msa"` from the parametrized
+`test_planned_methods_not_implemented`. It is also the first backend to use
+the optional keys — `gap_history`, `iterations` and `relative_gap` — and the
+first to need `link_flows_table(..., coerce=False)`.
 
 Those names are referenced outside `assignment.py` — the parametrized
 `test_planned_methods_not_implemented` in `tests/test_assignment_api.py`, the
