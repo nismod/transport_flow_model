@@ -186,4 +186,5 @@ Batch the call where a batch is natural; where it is not, parse once with
 Remaining headroom in the scenario loop: `PreparedDisruption.scenario` scans
 every parsed path row to find the affected ones, so a no-op scenario still
 costs 2.1 ms of the 2.3 ms on chicago-sketch's 93k paths. An index from link to
-the paths using it would make that proportional to the flow actually affected.
+the paths using it would make that proportional to the flow actually affected —
+filed as `issues/m0-12-index-paths-by-link-for-scenarios.md`.
