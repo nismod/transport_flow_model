@@ -44,10 +44,9 @@ the versioning policy in the documentation).
 - Sphinx API reference for the public API, including `relative_gap` and
   `link_costs`.
 - `scripts/profile_gap_cost.py` (`pixi run profile-gap-cost`): measures what
-  evaluating the relative gap costs relative to an all-or-nothing pass. It
-  currently costs about three times as much — 75-80% of a would-be
-  equilibrium iteration — mostly because `core.shortest_paths_from` rebuilds
-  the graph on every call. Recorded in the `convergence` module docstring.
+  evaluating the relative gap costs relative to an all-or-nothing pass.
+  Recorded in the `convergence` module docstring, along with why it once
+  cost three times as much.
 - `core.skim(network, od_pairs) -> pa.Table`: least-cost travel time per OD
   pair, one shortest-path tree per distinct origin over a network parsed
   once, with a null cost where the destination is unreachable.
@@ -57,7 +56,7 @@ the versioning policy in the documentation).
   nothing in it depends on which links fail, so a scenario run should not
   re-read it every time.
 - `core.prepare(links) -> PreparedNetwork`: a network parsed once, with
-  `allocate` and `disrupt` methods that reuse it. Every `core` call
+  `allocate` and `skim` methods that reuse it. Every `core` call
   otherwise re-parses its link table, interns ids and rebuilds the graph
   before doing any work, which callers looping over origins or scenarios
   pay every iteration. The module-level functions are unchanged and are
@@ -94,10 +93,11 @@ the versioning policy in the documentation).
   `core.disrupt` (not `allocate_arrow`/`disrupt_arrow`), and data crosses
   through the Arrow C stream interface rather than Arrow IPC.
 - `disrupt` prepares the network and baseline paths once for the whole
-  scenario run. On chicago-sketch a scenario drops from 72ms to 2.3ms, so
-  10 000 scenarios go from about 12 minutes to under half a minute. A
-  scenario that removes a link carrying no flow used to cost as much as one
-  that reroutes real traffic.
+  scenario run, and indexes those paths by link so a scenario reaches only
+  the flows it affects. On chicago-sketch a scenario drops from 72ms to
+  0.23ms, so 10 000 scenarios go from about 12 minutes to under a minute.
+  A scenario that removes a link carrying no flow used to cost as much as
+  one that reroutes real traffic.
 - `relative_gap` and `RadiationModel.generate` ask for all their
   shortest-path costs in one `core.skim` call instead of looping over
   origins. Evaluating the relative gap on chicago-sketch drops from 0.47s

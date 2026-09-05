@@ -178,13 +178,17 @@ to pay that per iteration:
 | loop | before | after | how |
 | --- | --- | --- | --- |
 | `relative_gap` over origins | 0.47 s | 0.046 s | one batched `core.skim` |
-| `disrupt` per scenario | 72 ms | 2.3 ms | `core.prepare_disruption` once |
+| `disrupt` per scenario | 72 ms | 0.23 ms | `core.prepare_disruption` once, plus a link index |
 
 Batch the call where a batch is natural; where it is not, parse once with
 `core.prepare` or `core.prepare_disruption` and call methods on the handle.
 
-Remaining headroom in the scenario loop: `PreparedDisruption.scenario` scans
-every parsed path row to find the affected ones, so a no-op scenario still
-costs 2.1 ms of the 2.3 ms on chicago-sketch's 93k paths. An index from link to
-the paths using it would make that proportional to the flow actually affected —
-filed as `issues/m0-12-index-paths-by-link-for-scenarios.md`.
+The same rule applies inside a handle. `PreparedDisruption` keeps a CSR index
+from link to the baseline paths using it, so a scenario reaches only the flows
+it affects — on chicago-sketch a failed link is used by a median of 251 of
+93 513 paths. Scanning them all instead cost 1.8 ms of every scenario, no-ops
+included.
+
+Remaining headroom: a scenario still copies the whole link table
+(`edges_with_flows_removed_from_affected_paths`), so its floor is O(links) —
+0.10 ms of the 0.23 ms here, and a real cost at 10M edges.

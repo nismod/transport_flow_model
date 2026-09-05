@@ -117,7 +117,7 @@ impl PyPreparedDisruption {
         let output = core::disrupt_with_preprocessed(
             &self.network.edges,
             &inputs.affected_flows,
-            &inputs.current_edge_flows,
+            self.paths.current_edge_flows(),
             &inputs.initial_costs_by_od,
             &failed_edges,
             capacity_constrained,

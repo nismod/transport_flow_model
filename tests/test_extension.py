@@ -455,3 +455,80 @@ def test_prepared_disruption_rejects_unknown_edge_path_ids():
     )
     with pytest.raises(ValueError, match="unknown edge_id"):
         core.prepare_disruption(network, od_flows)
+
+
+def _fan_out_network():
+    """One origin, three destinations, each reachable by a cheap and a dear link."""
+    return pd.DataFrame(
+        {
+            "edge_from": ["O", "O", "O", "O", "O"],
+            "edge_to": ["A", "A", "B", "C", "C"],
+            "edge_id": ["OA", "OA2", "OB", "OC", "OC2"],
+            "cost": [1.0, 5.0, 1.0, 1.0, 5.0],
+            "capacity": [100.0] * 5,
+        }
+    )
+
+
+def _fan_out_paths():
+    return pd.DataFrame(
+        {
+            "origin_id": ["O", "O", "O"],
+            "destination_id": ["A", "B", "C"],
+            "flow": [10.0, 10.0, 10.0],
+            "edge_path": [["OA"], ["OB"], ["OC"]],
+            "cost": [1.0, 1.0, 1.0],
+        }
+    )
+
+
+def test_affected_flows_keep_path_table_row_order():
+    """Failed links are gathered in path-table order, not in failure order.
+
+    The affected flows reach the rerouting step in this order and it shows
+    up in the output, so gathering link-by-link would permute the result.
+    """
+    prepared = core.prepare_disruption(_fan_out_network(), _fan_out_paths())
+    # OC is row 2 and OA is row 0: naming them in this order must not
+    # reorder the output.
+    rerouted = prepared.scenario(["OC", "OA"])["rerouted_flows"]
+    assert rerouted["destination_id"].to_pylist() == ["A", "C"]
+    assert rerouted["edge_path"].to_pylist() == [["OA2"], ["OC2"]]
+
+
+def test_path_using_two_failed_links_is_affected_once():
+    """A path reachable from two failed links must not be counted twice."""
+    network = pd.DataFrame(
+        {
+            "edge_from": ["A", "B", "A"],
+            "edge_to": ["B", "C", "C"],
+            "edge_id": ["AB", "BC", "AC"],
+            "cost": [1.0, 1.0, 5.0],
+            "capacity": [100.0, 100.0, 100.0],
+        }
+    )
+    od_flows = pd.DataFrame(
+        {
+            "origin_id": ["A"],
+            "destination_id": ["C"],
+            "flow": [10.0],
+            "edge_path": [["AB", "BC"]],
+            "cost": [2.0],
+        }
+    )
+    prepared = core.prepare_disruption(network, od_flows)
+
+    both = prepared.scenario(["AB", "BC"])
+    assert both["rerouted_flows"].num_rows == 1
+    assert both["rerouted_flows"]["flow"].to_pylist() == [10.0]
+    assert both["losses"].num_rows == 1
+    # Failing either link alone reroutes the same single path.
+    assert both == prepared.scenario(["AB"])
+
+
+def test_scenario_on_a_link_no_path_uses_is_a_no_op():
+    prepared = core.prepare_disruption(_fan_out_network(), _fan_out_paths())
+    unused = prepared.scenario(["OA2"])
+    assert unused["rerouted_flows"].num_rows == 0
+    assert unused["isolated_od"].num_rows == 0
+    assert unused == prepared.scenario([])

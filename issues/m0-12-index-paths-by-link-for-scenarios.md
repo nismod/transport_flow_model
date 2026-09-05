@@ -61,3 +61,44 @@ at national scale, where the path set is orders of magnitude larger.
 - `core/src/arrow_ffi.rs` — `PreparedOdPaths` and `for_failed_edges`.
 - `core/src/core.rs` — `disrupt_with_preprocessed`, which already takes preprocessed inputs.
 - `ws4-04-scale-10k-scenarios.md` — the scale gate this feeds.
+
+## Result: done
+
+`PreparedOdPaths` gained a CSR index over internal link ids — `indptr` plus `rows_by_edge`,
+not `Vec<Vec<u32>>`, which would be one heap allocation per link. The counting pass is free:
+`prepare_od_paths_batches` already walked every path's `edge_path` to accumulate
+`current_edge_flows`, so only the fill pass is new. `for_failed_edges` now gathers rows from
+the index instead of scanning, which also deletes the `is_affected` test and the
+`vec![false; n_links]` it needed. `current_edge_flows` is no longer cloned per scenario;
+`disrupt_with_preprocessed` borrows it.
+
+Measured on this machine, min-of-7:
+
+| instance | path rows | per scenario | no-op | 10k scenarios |
+| --- | --- | --- | --- | --- |
+| anaheim | 1 406 | 2.2 → **0.117** ms | 2.1 → **0.070** ms | 0.4 → **0.02** min |
+| chicago-sketch | 93 513 | 2.3 → **0.228** ms | 2.1 → **0.101** ms | 0.4 → **0.04** min |
+
+The gathered rows are sorted, which does double duty: it drops the duplicate a path picks up
+when it uses two failed links, and it restores path-table row order. That order is
+observable — `demands_from_affected_flows` preserves input order into
+`allocate_unconstrained`, which keeps within-origin insertion order — so gathering
+link-by-link would have permuted `rerouted_flows`. Removing the sort fails
+`test_affected_flows_keep_path_table_row_order` and
+`test_path_using_two_failed_links_is_affected_once`.
+
+### Cost
+
+Building the index adds ~5 ms to a 51 ms `prepare_disruption` on chicago-sketch, so the
+one-shot `core.disrupt` path — which prepares a handle and runs a single scenario — goes
+from 55.4 ms to 61.1 ms, **about 10% slower**. Accepted rather than deferred behind a
+`OnceCell`: the one-shot path is the legacy `model.py` wrapper and the tests, while every
+scenario sweep, which is what WS4-04 gates on, is 10x faster.
+
+### Still open
+
+A scenario's floor is now O(links), not O(paths): `edges_with_flows_removed_from_affected_paths`
+copies the whole `Vec<Edge>` per scenario, which is 0.10 ms of the 0.23 ms on chicago-sketch
+and would be ~480 MB of copying per scenario at 10M edges. `disruption._affects_flow` is
+also still an O(links) `pc.is_in` per scenario in Python. Neither was in scope here; both
+belong with ws4-04.

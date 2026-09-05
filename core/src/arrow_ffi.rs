@@ -344,7 +344,6 @@ pub struct PreparedDemands {
 
 pub struct DisruptionInputs {
     pub affected_flows: Vec<OdFlow>,
-    pub current_edge_flows: Vec<f64>,
     pub initial_costs_by_od: Vec<(usize, usize, f64)>,
 }
 
@@ -610,39 +609,63 @@ pub struct PreparedOdPaths {
     flows: Vec<OdFlow>,
     /// Baseline flow per link, summed over every path. Scenario-independent.
     current_edge_flows: Vec<f64>,
+    /// CSR index over internal link ids: the rows of `flows` whose path uses
+    /// link `e` are `rows_by_edge[indptr[e]..indptr[e + 1]]`, ascending.
+    ///
+    /// A `Vec<Vec<u32>>` would be one heap allocation per link, which does
+    /// not scale to the 10M-edge networks in `DEVELOPMENT.md`.
+    indptr: Vec<u32>,
+    rows_by_edge: Vec<u32>,
 }
 
 impl PreparedOdPaths {
-    /// The disruption inputs for one set of failed links.
-    pub fn for_failed_edges(&self, failed_edges: &[usize]) -> DisruptionInputs {
-        let mut failed_edge_flags = vec![false; self.current_edge_flows.len().max(1)];
-        for edge_id in failed_edges {
-            failed_edge_flags[*edge_id] = true;
-        }
+    /// Baseline flow per link, in internal link order.
+    pub fn current_edge_flows(&self) -> &[f64] {
+        &self.current_edge_flows
+    }
 
-        let mut affected_flows = Vec::new();
-        let mut initial_costs_by_od: BTreeMap<(usize, usize), f64> = BTreeMap::new();
-        for flow in &self.flows {
-            let is_affected = flow
-                .edge_path
-                .iter()
-                .any(|edge_id| failed_edge_flags[*edge_id]);
-            if is_affected {
-                *initial_costs_by_od
-                    .entry((flow.origin, flow.destination))
-                    .or_insert(0.0) += flow.cost;
-                affected_flows.push(flow.clone());
+    /// The disruption inputs for one set of failed links.
+    ///
+    /// Reaches only the paths that use a failed link, so the cost is
+    /// proportional to the flow a scenario affects rather than to the size
+    /// of the baseline path set.
+    pub fn for_failed_edges(&self, failed_edges: &[usize]) -> DisruptionInputs {
+        let mut rows = Vec::new();
+        for edge_id in failed_edges {
+            if let Some(slice) = self.rows_for_edge(*edge_id) {
+                rows.extend_from_slice(slice);
             }
+        }
+        // Sorting does double duty: it drops the duplicate a path picks up
+        // when it uses two failed links, and it restores path-table row
+        // order, which reaches the output through
+        // `demands_from_affected_flows`.
+        rows.sort_unstable();
+        rows.dedup();
+
+        let mut affected_flows = Vec::with_capacity(rows.len());
+        let mut initial_costs_by_od: BTreeMap<(usize, usize), f64> = BTreeMap::new();
+        for row in rows {
+            let flow = &self.flows[row as usize];
+            *initial_costs_by_od
+                .entry((flow.origin, flow.destination))
+                .or_insert(0.0) += flow.cost;
+            affected_flows.push(flow.clone());
         }
 
         DisruptionInputs {
             affected_flows,
-            current_edge_flows: self.current_edge_flows.clone(),
             initial_costs_by_od: initial_costs_by_od
                 .into_iter()
                 .map(|((origin, destination), cost)| (origin, destination, cost))
                 .collect(),
         }
+    }
+
+    fn rows_for_edge(&self, edge_id: usize) -> Option<&[u32]> {
+        let start = *self.indptr.get(edge_id)? as usize;
+        let end = *self.indptr.get(edge_id + 1)? as usize;
+        Some(&self.rows_by_edge[start..end])
     }
 }
 
@@ -650,8 +673,12 @@ fn prepare_od_paths_batches(
     batches: &[RecordBatch],
     network: &mut PreparedNetwork,
 ) -> Result<PreparedOdPaths, String> {
-    let mut current_edge_flows = vec![0.0; network.edge_ids.len()];
+    let n_links = network.edge_ids.len();
+    let mut current_edge_flows = vec![0.0; n_links];
     let mut flows = Vec::with_capacity(batches.iter().map(RecordBatch::num_rows).sum());
+    // Counts for the CSR index, accumulated in the parse pass that already
+    // walks every path; only the fill pass below is extra work.
+    let mut uses_per_edge = vec![0u32; n_links];
 
     for batch in batches {
         let origins = id_column(batch, "origin_id")?;
@@ -677,6 +704,7 @@ fn prepare_od_paths_batches(
 
             for edge_id in &edge_path {
                 current_edge_flows[*edge_id] += flow;
+                uses_per_edge[*edge_id] += 1;
             }
 
             flows.push(OdFlow {
@@ -689,10 +717,40 @@ fn prepare_od_paths_batches(
         }
     }
 
+    let (indptr, rows_by_edge) = build_edge_index(&flows, &uses_per_edge);
+
     Ok(PreparedOdPaths {
         flows,
         current_edge_flows,
+        indptr,
+        rows_by_edge,
     })
+}
+
+/// CSR index from link to the rows of `flows` whose path uses it.
+///
+/// `uses_per_edge` is the count already accumulated while parsing, so this is
+/// a single fill pass. Rows land in ascending order per link because `flows`
+/// is walked in order.
+fn build_edge_index(flows: &[OdFlow], uses_per_edge: &[u32]) -> (Vec<u32>, Vec<u32>) {
+    let mut indptr = Vec::with_capacity(uses_per_edge.len() + 1);
+    let mut total = 0u32;
+    indptr.push(0);
+    for uses in uses_per_edge {
+        total += uses;
+        indptr.push(total);
+    }
+
+    let mut rows_by_edge = vec![0u32; total as usize];
+    let mut next = indptr.clone();
+    for (row, flow) in flows.iter().enumerate() {
+        for edge_id in &flow.edge_path {
+            rows_by_edge[next[*edge_id] as usize] = row as u32;
+            next[*edge_id] += 1;
+        }
+    }
+
+    (indptr, rows_by_edge)
 }
 
 impl PreparedNetwork {
@@ -1570,9 +1628,17 @@ mod tests {
         let paths = prepare_od_paths_batches(&[batch], &mut network).unwrap();
         let inputs = paths.for_failed_edges(&[1]);
 
-        assert_eq!(inputs.current_edge_flows, vec![0.0, 7.0, 7.0]);
+        assert_eq!(paths.current_edge_flows(), &[0.0, 7.0, 7.0]);
         assert_eq!(inputs.affected_flows[0].edge_path, vec![1, 2]);
         assert_eq!(inputs.initial_costs_by_od, vec![(0, 1, 8.0)]);
+
+        // The path uses links 1 and 2, so the index reaches it from either,
+        // and failing both must not report it twice.
+        assert_eq!(paths.rows_for_edge(0), Some(&[][..]));
+        assert_eq!(paths.rows_for_edge(1), Some(&[0u32][..]));
+        assert_eq!(paths.rows_for_edge(2), Some(&[0u32][..]));
+        assert_eq!(paths.for_failed_edges(&[1, 2]).affected_flows.len(), 1);
+        assert!(paths.for_failed_edges(&[0]).affected_flows.is_empty());
     }
 
     #[test]
