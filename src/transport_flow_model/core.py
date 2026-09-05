@@ -101,23 +101,6 @@ class PreparedNetwork:
         result = self._inner.skim(_to_table(od_pairs), directed)
         return _from_ffi_stream(result)
 
-    def disrupt(
-        self,
-        od_flows: pa.Table | pa.RecordBatch | pd.DataFrame,
-        failed_edges: list[object],
-        *,
-        capacity_constrained: bool = True,
-        directed: bool = True,
-    ) -> dict[str, pa.Table]:
-        """Reroute failed-edge flows; see :func:`disrupt`."""
-        result = self._inner.disrupt(
-            _to_table(od_flows),
-            failed_edges,
-            capacity_constrained,
-            directed,
-        )
-        return {name: _from_ffi_stream(payload) for name, payload in result.items()}
-
     def __repr__(self) -> str:
         return f"PreparedNetwork(n_links={self.n_links}, n_nodes={self.n_nodes})"
 
