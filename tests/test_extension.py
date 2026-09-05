@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pytest
@@ -532,3 +533,121 @@ def test_scenario_on_a_link_no_path_uses_is_a_no_op():
     assert unused["rerouted_flows"].num_rows == 0
     assert unused["isolated_od"].num_rows == 0
     assert unused == prepared.scenario([])
+
+
+def _two_route_links():
+    """A->C direct at cost 5, or via B at 1 + 1; the via-B route wins."""
+    return pa.table(
+        {
+            "edge_from": ["A", "A", "B"],
+            "edge_to": ["C", "B", "C"],
+            "edge_id": ["AC", "AB", "BC"],
+            "cost": [5.0, 1.0, 1.0],
+        }
+    )
+
+
+def _with_costs(links: pa.Table, costs: list[float]) -> pa.Table:
+    return links.set_column(
+        links.schema.get_field_index("cost"), "cost", pa.array(costs, pa.float64())
+    )
+
+
+def test_set_costs_then_allocate_matches_a_table_carrying_those_costs():
+    """New costs on the handle must give what re-parsing with them would."""
+    links = _two_route_links()
+    od = pd.DataFrame({"origin_id": ["A"], "destination_id": ["C"], "flow": [7.0]})
+    dearer_via_b = [5.0, 10.0, 10.0]
+
+    prepared = core.prepare(links)
+    baseline = prepared.allocate(od)
+    assert baseline["od_flows"]["edge_path"].to_pylist() == [["AB", "BC"]]
+
+    prepared.set_costs(dearer_via_b)
+    rerouted = prepared.allocate(od)
+
+    # the direct link now wins, and the answer is the re-parsed one exactly
+    assert rerouted["od_flows"]["edge_path"].to_pylist() == [["AC"]]
+    assert rerouted == core.allocate(_with_costs(links, dearer_via_b), od)
+
+
+def test_set_costs_is_reflected_in_skim():
+    prepared = core.prepare(_two_route_links())
+    pairs = pd.DataFrame({"origin_id": ["A"], "destination_id": ["C"]})
+    assert prepared.skim(pairs)["cost"].to_pylist() == [2.0]
+
+    prepared.set_costs([5.0, 10.0, 10.0])
+    assert prepared.skim(pairs)["cost"].to_pylist() == [5.0]
+
+
+def test_set_costs_rejects_the_wrong_number_of_costs():
+    prepared = core.prepare(_two_route_links())
+    with pytest.raises(ValueError, match="costs has 2 entries.*network has 3 links"):
+        prepared.set_costs([1.0, 2.0])
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_set_costs_rejects_values_that_are_not_finite(bad):
+    """An infinite cost hides a link; a NaN poisons every comparison with it."""
+    prepared = core.prepare(_two_route_links())
+    with pytest.raises(ValueError, match="not finite"):
+        prepared.set_costs([1.0, bad, 1.0])
+
+
+def test_a_failed_set_costs_leaves_the_handle_usable_and_unchanged():
+    prepared = core.prepare(_two_route_links())
+    pairs = pd.DataFrame({"origin_id": ["A"], "destination_id": ["C"]})
+
+    with pytest.raises(ValueError):
+        prepared.set_costs([9.0, 9.0])
+    assert prepared.skim(pairs)["cost"].to_pylist() == [2.0]
+
+    with pytest.raises(ValueError):
+        prepared.set_costs([9.0, 9.0, float("nan")])
+    assert prepared.skim(pairs)["cost"].to_pylist() == [2.0]
+
+
+def test_set_costs_leaves_the_network_shape_unchanged():
+    prepared = core.prepare(_two_route_links())
+    prepared.set_costs([5.0, 10.0, 10.0])
+    assert prepared.n_links == 3
+    assert prepared.n_nodes == 3
+
+
+@pytest.mark.parametrize(
+    "costs",
+    [
+        [5.0, 10.0, 10.0],
+        np.array([5.0, 10.0, 10.0]),
+        np.array([5, 10, 10]),
+        pa.array([5.0, 10.0, 10.0]),
+        pa.chunked_array([[5.0], [10.0, 10.0]]),
+    ],
+    ids=["list", "numpy", "numpy-int", "pyarrow", "pyarrow-chunked"],
+)
+def test_set_costs_accepts_any_one_dimensional_sequence(costs):
+    prepared = core.prepare(_two_route_links())
+    prepared.set_costs(costs)
+    pairs = pd.DataFrame({"origin_id": ["A"], "destination_id": ["C"]})
+    assert prepared.skim(pairs)["cost"].to_pylist() == [5.0]
+
+
+def test_set_costs_rejects_a_two_dimensional_array():
+    prepared = core.prepare(_two_route_links())
+    with pytest.raises(ValueError, match="one-dimensional"):
+        prepared.set_costs(np.array([[5.0, 10.0, 10.0]]))
+
+
+def test_set_costs_does_not_reach_back_into_the_link_table():
+    """The handle owns its costs; the table it was built from is untouched."""
+    links = _two_route_links()
+    od = pd.DataFrame({"origin_id": ["A"], "destination_id": ["C"], "flow": [7.0]})
+
+    prepared = core.prepare(links)
+    prepared.set_costs([5.0, 10.0, 10.0])
+
+    assert links["cost"].to_pylist() == [5.0, 1.0, 1.0]
+    # a later free-function call on the same table still sees the old costs
+    assert core.allocate(links, od)["od_flows"]["edge_path"].to_pylist() == [
+        ["AB", "BC"]
+    ]

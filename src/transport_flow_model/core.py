@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 
@@ -46,6 +48,33 @@ class PreparedNetwork:
     def n_nodes(self) -> int:
         """Nodes reached by the network's own links."""
         return self._inner.n_nodes
+
+    def set_costs(
+        self, costs: np.ndarray | pa.Array | pa.ChunkedArray | Sequence[float]
+    ) -> None:
+        """Replace every link's cost, in network link order.
+
+        ``costs`` holds one finite value per link, in the order of the link
+        table passed to :func:`prepare`. It may be a numpy array, a pyarrow
+        ``Array`` or ``ChunkedArray``, or any sequence of floats.
+
+        This exists so an iterative method — which recomputes congested
+        costs every iteration — can update them without re-parsing the link
+        table, which is most of what a call across the boundary costs. The
+        prepared network keeps its own copy of the costs: the table it was
+        built from is not touched.
+
+        Raises :class:`ValueError` if the length does not match the number
+        of links, or if any value is not finite (an infinite cost would
+        silently make a link unreachable and a NaN would poison every path
+        through it).
+        """
+        if isinstance(costs, (pa.Array, pa.ChunkedArray)):
+            costs = costs.to_numpy(zero_copy_only=False)
+        values = np.asarray(costs, dtype="float64")
+        if values.ndim != 1:
+            raise ValueError(f"costs must be one-dimensional, got {values.ndim} dims")
+        self._inner.set_costs(values)
 
     def allocate(
         self,

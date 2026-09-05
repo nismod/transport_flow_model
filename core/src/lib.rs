@@ -39,6 +39,11 @@ impl PyPreparedNetwork {
         self.inner.n_nodes()
     }
 
+    /// Replace every link's cost, in network link order.
+    fn set_costs(&mut self, costs: Vec<f64>) -> PyResult<()> {
+        self.inner.set_costs(&costs).map_err(PyValueError::new_err)
+    }
+
     fn allocate<'py>(
         &mut self,
         py: Python<'py>,

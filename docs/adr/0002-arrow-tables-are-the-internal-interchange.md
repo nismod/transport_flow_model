@@ -67,6 +67,14 @@ Parsed state may be cached behind an opaque handle, under three conditions:
 - it is **never the only way to reach a capability** — each method has a
   module-level counterpart taking tables, implemented as `prepare(...)` plus
   one call.
+- link costs may be **replaced in place** with `PreparedNetwork.set_costs`,
+  the one permitted mutation of a prepared network. It is safe only because
+  every method rebuilds its graph from the edge list on each call and nothing
+  derived from costs is cached; a future cached structure derived from costs
+  (a contraction hierarchy, say) must be invalidated by `set_costs`. It exists
+  because an iterative method changes every link's cost every iteration, and
+  the alternative — re-parsing a whole link table with `prepare` — is exactly
+  the per-iteration re-parse the handle was introduced to remove.
 
 So a handle is a cache, not a second interchange format. Data still crosses as
 Arrow; what the handle saves is re-deriving from it. Code that does one call

@@ -768,6 +768,42 @@ impl PreparedNetwork {
         self.node_ids.len()
     }
 
+    /// Replace every link's cost, in network link order.
+    ///
+    /// This is the one permitted in-place mutation of a prepared network.
+    /// It is safe because nothing derived from costs is cached: `allocate`
+    /// and `skim` rebuild the graph from `edges` on every call, reading
+    /// `edge.cost` as they go, so the next call simply sees the new values.
+    /// Anything cached from costs in future (a contraction hierarchy, say)
+    /// must be invalidated here.
+    ///
+    /// Errors if `costs` is not exactly as long as the edge list, or if any
+    /// value is not finite: an infinite cost would silently make a link
+    /// unreachable rather than expensive, and a NaN would poison every path
+    /// comparison it takes part in.
+    pub fn set_costs(&mut self, costs: &[f64]) -> Result<(), String> {
+        if costs.len() != self.edges.len() {
+            return Err(format!(
+                "costs has {} entries but the network has {} links",
+                costs.len(),
+                self.edges.len()
+            ));
+        }
+        for (index, cost) in costs.iter().enumerate() {
+            if !cost.is_finite() {
+                return Err(format!(
+                    "costs[{index}] is {cost}, which is not finite; an infinite cost \
+                     would silently make a link unreachable and a NaN would poison \
+                     every path through it"
+                ));
+            }
+        }
+        for (edge, cost) in self.edges.iter_mut().zip(costs) {
+            edge.cost = *cost;
+        }
+        Ok(())
+    }
+
     /// Run `body` against this network, then discard any node ids it
     /// interned from the call's own inputs.
     ///

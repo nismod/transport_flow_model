@@ -89,7 +89,7 @@ serialization, no buffer copy.
 | `core.disrupt(network, od_flows, failed_edges, capacity_constrained=, directed=)` | `PreparedDisruption` | `rerouted_flows`, `network_flows`, `isolated_od`, `losses` |
 | `core.skim(network, od_pairs, directed=)` | `skim_ffi` | one table: `origin_id`, `destination_id`, `cost` (null if unreachable) |
 | `core.shortest_paths_from(network, origin, directed=)` | `shortest_paths_from_ffi` | one table: `node_id`, `cost` |
-| `core.prepare(network)` | `PreparedNetwork` | a handle with `allocate` and `skim` methods |
+| `core.prepare(network)` | `PreparedNetwork` | a handle with `allocate`, `skim` and `set_costs` methods |
 | `core.prepare_disruption(network, od_flows)` | `PreparedDisruption` | a handle with a `scenario(failed_edges)` method |
 | `core.version()` | `version` | extension version string |
 

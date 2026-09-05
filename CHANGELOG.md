@@ -73,6 +73,14 @@ the versioning policy in the documentation).
   pay every iteration. The module-level functions are unchanged and are
   now implemented as `prepare(...)` plus one call. ADR-0002 is amended to
   record when a handle is permitted.
+- `PreparedNetwork.set_costs(costs)`: replace every link's cost in place, in
+  network link order, from a numpy array, a pyarrow array or any sequence.
+  An iterative method changes every link's cost every iteration, and the
+  only alternative was re-parsing a whole link table with `core.prepare` —
+  the per-iteration re-parse the handle exists to remove. The graph is
+  rebuilt from the edge list on every call and nothing derived from costs
+  is cached, so this is the one permitted mutation of a prepared network;
+  it rejects a wrong-length input and any value that is not finite.
 - Criterion benchmarks for the Arrow reader path (`read_network_batches`,
   `prepare_network_batches`), so `pixi run extension-bench` catches a
   regression in how fast a network is parsed.
