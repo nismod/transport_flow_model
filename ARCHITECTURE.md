@@ -17,7 +17,8 @@ Everything is under `src/transport_flow_model/`.
 | `network.py` | `Network`: immutable topology plus per-link attributes as a `pyarrow.Table`; node factorization and lazily built CSR adjacency; builders from (geo)pandas, pyarrow and TNTP. |
 | `demand.py` | `Demand`: OD demand in COO form (one row per pair), with a TNTP builder that tracks zone-to-node mapping for split centroids. |
 | `assignment.py` | `assign()`, the `METHODS` registry and `register_method`; the `"sequential"` backend; reserved stubs for `"msa"`, `"fw"`, `"bfw"`, `"staq"`; `AssignmentResult` and `Provenance`. |
-| `convergence.py` | `relative_gap()` (convergence measure) and `link_costs()` (the BPR volume-delay function, currently hardcoded here). |
+| `costs.py` | Link cost (volume-delay) functions: the `CostFunction` protocol, `BPR` (travel time, integral, derivative) and `beckmann_objective()`. |
+| `convergence.py` | `relative_gap()` (convergence measure) and `link_costs()`, which evaluates the network's `BPR` cost function. |
 | `disruption.py` | `disrupt()`, `Scenario`, `LinkDelta`, `ScenarioResult`, `DisruptionResults`. |
 | `core.py` | The only module that imports the Rust extension `_core`. Wraps `allocate()`, `disrupt()`, `skim()`, `shortest_paths_from()`, `prepare()`, `prepare_disruption()`, `version()`. |
 | `datasets.py` | Registry of benchmark datasets with checksums and cached downloads; `BEST_KNOWN` published objective values and equilibrium flows. |
@@ -115,10 +116,14 @@ extension is required, not optional: `import transport_flow_model` reaches
   objective for validation.
 - **A new disruption effect** is a `LinkDelta` attribute. Only link removal is
   implemented; other deltas raise `NotImplementedError`.
-- **Volume-delay functions** are *not* yet an extension point. BPR is
-  hardcoded in `convergence.link_costs`, reading the `alpha`, `beta` and
-  `capacity` link attributes when all three are present and treating the
-  network as fixed-cost otherwise.
+- **A volume-delay function** lives in `costs.py` and satisfies the
+  `CostFunction` protocol: `travel_time(x)`, `integral(x)` and
+  `derivative(x)`, each vectorised over links in network link order. `BPR`
+  is the only implementation; `BPR.from_network` reads the `alpha`, `beta`
+  and `capacity` link attributes when all three are present and treats the
+  network as fixed-cost otherwise, and `convergence.link_costs` evaluates
+  it. Cost functions are not yet selectable from `assign()` or `RunConfig`,
+  and the Rust core has no mirror of them.
 
 ## Table schemas
 

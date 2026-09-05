@@ -30,6 +30,12 @@ Assignment
    :members:
    :undoc-members:
 
+Cost functions
+--------------
+
+.. automodule:: transport_flow_model.costs
+   :members:
+
 Convergence
 -----------
 

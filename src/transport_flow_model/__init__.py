@@ -8,6 +8,7 @@ the changelog and the versioning policy in the documentation.
 from .assignment import AssignmentResult, Provenance, assign
 from .config import RunConfig, load_config
 from .convergence import link_costs, relative_gap
+from .costs import BPR, beckmann_objective
 from .demand import Demand
 from .disruption import (
     DisruptionResults,
@@ -28,6 +29,7 @@ except ImportError:  # pragma: no cover - package not built/installed
 
 __all__ = [
     "AssignmentResult",
+    "BPR",
     "Demand",
     "DisruptionResults",
     "LinkDelta",
@@ -39,6 +41,7 @@ __all__ = [
     "ScenarioResult",
     "__version__",
     "assign",
+    "beckmann_objective",
     "compute_losses",
     "datasets",
     "disrupt",

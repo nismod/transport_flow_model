@@ -13,11 +13,15 @@ Boyce, Ralevic-Dekic & Bar-Gera (2004, J. Transportation Engineering 130(1))
 argue gaps of 1e-4 or better are needed before flow differences between
 scenarios are trustworthy.
 
-Link travel times follow the BPR convention used by the TNTP datasets
-(see :data:`transport_flow_model.datasets.BEST_KNOWN`):
-``cost * (1 + alpha * (x / capacity)^beta) + distance_cost * length``.
-Networks without ``alpha``/``beta``/``capacity`` attributes are treated as
-fixed-cost (flow-independent) networks.
+Link travel times come from :mod:`transport_flow_model.costs`, whose cost
+functions satisfy the :class:`~transport_flow_model.costs.CostFunction`
+protocol. :func:`link_costs` evaluates the default one,
+:class:`~transport_flow_model.costs.BPR`, built from the network's link
+attributes: ``cost * (1 + alpha * (x / capacity)^beta) + distance_cost *
+length``, the convention used by the TNTP datasets (see
+:data:`transport_flow_model.datasets.BEST_KNOWN`). Networks without
+``alpha``/``beta``/``capacity`` attributes are treated as fixed-cost
+(flow-independent) networks.
 
 Cost of evaluating the gap
 --------------------------
@@ -62,6 +66,7 @@ import numpy as np
 import pyarrow as pa
 
 from transport_flow_model import core
+from transport_flow_model.costs import BPR, _as_float_array, _flow_array
 from transport_flow_model.demand import Demand
 from transport_flow_model.network import Network
 
@@ -73,6 +78,10 @@ def link_costs(
     distance_cost: float = 0.0,
 ) -> np.ndarray:
     """Congested link travel times ``t_a(x_a)``, in network link order.
+
+    Evaluates :class:`transport_flow_model.costs.BPR` built from the
+    network's link attributes; use that class directly if you also need the
+    integral or the derivative.
 
     Parameters
     ----------
@@ -87,22 +96,7 @@ def link_costs(
         the published chicago-sketch solution).
     """
     x = _as_float_array(flows, network.n_links, "flows")
-    t = _as_float_array(network.attribute("cost"), network.n_links, "cost")
-    names = network.to_table().column_names
-    if {"alpha", "beta", "capacity"} <= set(names):
-        alpha = _as_float_array(network.attribute("alpha"), network.n_links, "alpha")
-        beta = _as_float_array(network.attribute("beta"), network.n_links, "beta")
-        capacity = _as_float_array(
-            network.attribute("capacity"), network.n_links, "capacity"
-        )
-        with np.errstate(divide="ignore", invalid="ignore"):
-            ratio = np.where(capacity > 0, x / capacity, 0.0)
-        t = t * (1.0 + alpha * np.power(ratio, beta))
-    if distance_cost:
-        t = t + distance_cost * _as_float_array(
-            network.attribute("length"), network.n_links, "length"
-        )
-    return t
+    return BPR.from_network(network, distance_cost=distance_cost).travel_time(x)
 
 
 def relative_gap(
@@ -150,25 +144,3 @@ def relative_gap(
     if min_cost_total <= 0.0:
         raise ValueError("Total shortest-path travel time is zero or negative")
     return (total_cost - min_cost_total) / min_cost_total
-
-
-def _flow_array(network: Network, flows: Any) -> np.ndarray:
-    link_flows = getattr(flows, "link_flows", None)
-    if link_flows is not None:  # AssignmentResult
-        flows = link_flows
-    if isinstance(flows, (pa.Table, pa.RecordBatch)):
-        if "flow" not in flows.schema.names:
-            raise ValueError("Flow table has no 'flow' column")
-        flows = flows["flow"]
-    return _as_float_array(flows, network.n_links, "flows")
-
-
-def _as_float_array(values: Any, n: int, name: str) -> np.ndarray:
-    if isinstance(values, (pa.Array, pa.ChunkedArray)):
-        array = values.to_numpy(zero_copy_only=False)
-    else:
-        array = np.asarray(values)
-    array = array.astype("float64", copy=False)
-    if array.shape != (n,):
-        raise ValueError(f"Expected {name} to have shape ({n},), got {array.shape}")
-    return array

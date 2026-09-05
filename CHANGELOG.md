@@ -47,6 +47,17 @@ the versioning policy in the documentation).
   evaluating the relative gap costs relative to an all-or-nothing pass.
   Recorded in the `convergence` module docstring, along with why it once
   cost three times as much.
+- `costs` module with the `CostFunction` protocol — `travel_time(x)`,
+  `integral(x)` and `derivative(x)`, each vectorised over links in network
+  link order — and `BPR`, a frozen dataclass implementing it from per-link
+  `free_flow`, `capacity`, `alpha`, `beta` and an optional additive
+  `distance_cost * length` term. `BPR` and `beckmann_objective(network,
+  flows)` (the objective user equilibrium minimizes, validated against
+  `datasets.BEST_KNOWN` for siouxfalls, anaheim and chicago-sketch) are
+  exported from the top level. `link_costs` now delegates to
+  `BPR.from_network(...).travel_time(...)`; its results are unchanged.
+  Conical (Spiess 1990) and DfT-style piecewise-linear curves, and mirrored
+  Rust implementations with golden tests, remain open in ws2-01.
 - `core.skim(network, od_pairs) -> pa.Table`: least-cost travel time per OD
   pair, one shortest-path tree per distinct origin over a network parsed
   once, with a null cost where the destination is unreachable.
