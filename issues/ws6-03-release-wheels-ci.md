@@ -1,10 +1,12 @@
 ## Context
 `pip install transport_flow_model` must work without a Rust toolchain, or the Rust core
-will gate adoption.
+will gate adoption. There is no pure-Python fallback (see ws1-07), so this is carried
+entirely by shipping wheels for the platforms we target — an sdist-only install needs a
+compiler.
 
 ## Task
 - maturin-based build; abi3 wheels for Linux (manylinux2014 x86_64 + aarch64), macOS
-  (universal2), Windows; sdist with graceful no-rust fallback (ws1-07).
+  (universal2), Windows; sdist builds from source and requires a Rust toolchain.
 - Release workflow: tag -> build matrix -> test wheels against the validation suite ->
   publish to PyPI (trusted publishing); Zenodo DOI per release (repo already has one).
 - Optional conda-forge feedstock (separate follow-up if demand exists).

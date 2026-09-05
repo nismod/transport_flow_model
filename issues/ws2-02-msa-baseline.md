@@ -11,8 +11,7 @@ Method of Successive Averages: simplest convergent user-equilibrium algorithm
   MSA converges slowly — assert gap decreases and flows approach reference).
 
 ## Acceptance criteria
-- Reaches 1e-3 relative gap on SiouxFalls; result object fully populated; runs on both
-  Rust and fallback backends.
+- Reaches 1e-3 relative gap on SiouxFalls; result object fully populated.
 
 ## References
 - Sheffi (1985) "Urban Transportation Networks" ch.5 (free PDF from MIT) — MSA + Beckmann.
