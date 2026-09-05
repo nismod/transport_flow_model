@@ -76,6 +76,15 @@ so it already contains the shortest-path term: the gap is
 extra cost. `relative_gap` is what an outside caller uses to check a solution
 it did not produce.
 
+That gap belongs to the iterate entering the pass, so MSA stops before
+averaging again on all three of its exits — target reached, time limit, or
+iteration budget. `provenance.relative_gap` is therefore always a measurement
+of the flows returned beside it, not of the previous iterate. When the run
+stops without reaching `target_gap` it emits a `ConvergenceWarning` naming the
+passes performed, the gap reached and which budget ran out; the result is
+still returned, because a partly converged flow pattern is a usable answer to
+a screening run, but silence would let a caller mistake it for an equilibrium.
+
 Entry points: `scripts/flow_model/flow_allocation.py` and
 `scripts/flow_model/flow_disruptions.py` (config-driven runs),
 `scripts/benchmark_assignment.py` (gap, wall time and peak RSS per case).

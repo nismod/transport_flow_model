@@ -71,6 +71,20 @@ from transport_flow_model.demand import Demand
 from transport_flow_model.network import Network
 
 
+class ConvergenceWarning(UserWarning):
+    """An iterative method stopped before reaching its target gap.
+
+    Raised as a warning rather than an error because the result is still
+    usable — a partly converged flow pattern is the right answer to a
+    screening run — but it is not what was asked for, and the difference
+    matters: Boyce et al. (2004) put the threshold for trusting flow
+    differences between scenarios at a gap of 1e-4.
+
+    Silence it with :func:`warnings.simplefilter`, or avoid it by raising
+    ``max_iterations`` or relaxing ``target_gap``.
+    """
+
+
 def link_costs(
     network: Network,
     flows: Any,

@@ -60,8 +60,18 @@ the versioning policy in the documentation).
   `paths` is always `None` — an equilibrium has no single path per OD
   pair, so `include_paths=True` raises and an MSA result cannot yet be a
   disruption baseline (issue m0-13). `max_iterations` defaults to 50,
-  which is a screening budget, not a converged one; `provenance` reports
-  the gap actually achieved.
+  which is a screening budget, not a converged one: on SiouxFalls it stops
+  around a gap of 1.5e-2, two orders above the default `target_gap`. A run
+  that stops short of its target now warns with `ConvergenceWarning`,
+  naming the passes performed, the gap reached and which budget ran out,
+  instead of returning an unconverged answer silently. The gap MSA reports
+  is always a measurement of the flows it hands back — all three exits stop
+  before averaging again, where budget exhaustion used to average once more
+  and report the previous iterate's gap.
+- `ConvergenceWarning`, exported from the top level: an iterative method
+  stopped before reaching its target gap. A `UserWarning`, because the
+  partly converged result is still usable; silence it with
+  `warnings.simplefilter` where that is the intent.
 - `costs` module with the `CostFunction` protocol — `travel_time(x)`,
   `integral(x)` and `derivative(x)`, each vectorised over links in network
   link order — and `BPR`, a frozen dataclass implementing it from per-link

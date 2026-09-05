@@ -8,6 +8,8 @@ MSA reads its gap off the all-or-nothing pass it has to do anyway, and that
 test proves the shortcut is exact rather than approximately right.
 """
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -15,6 +17,7 @@ import pytest
 
 from transport_flow_model import (
     BPR,
+    ConvergenceWarning,
     Demand,
     Network,
     assign,
@@ -23,6 +26,16 @@ from transport_flow_model import (
     relative_gap,
 )
 from transport_flow_model.assignment import _msa_iterates
+
+#: Most tests here deliberately run MSA on a budget too small to converge,
+#: because they are about something else (dtypes, provenance, the option
+#: surface) and a converged run would cost hundreds of passes each. The
+#: resulting :class:`ConvergenceWarning` is expected, so silence it at module
+#: level. The tests that are *about* the warning use :func:`pytest.warns` or
+#: their own filter, both of which override this.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::transport_flow_model.convergence.ConvergenceWarning"
+)
 
 #: MSA converges like 1/k, so 1e-3 on SiouxFalls needs several hundred
 #: passes — far more than the default 50. See ``test_msa_convergence_rate``.
@@ -156,11 +169,60 @@ def test_free_gap_matches_independent_relative_gap(siouxfalls):
         assert current.gap == pytest.approx(independent, abs=1e-10)
 
 
-def test_reported_gap_is_the_gap_of_the_returned_flows(converged, siouxfalls):
-    """Stopping on the target skips the averaging, so the two coincide."""
+@pytest.mark.parametrize(
+    "options",
+    [
+        pytest.param({"target_gap": 1e-3, "max_iterations": 1000}, id="converged"),
+        pytest.param({"target_gap": 0.0, "max_iterations": 30}, id="max_iterations"),
+        pytest.param({"time_limit_s": 0.0, "max_iterations": 50}, id="time_limit"),
+    ],
+)
+def test_reported_gap_is_the_gap_of_the_returned_flows(siouxfalls, options):
+    """However it stops, MSA reports the gap of the flows it hands back.
+
+    Every exit stops before averaging. Averaging once more would leave
+    ``relative_gap`` describing the previous iterate, which is what the
+    benchmark harness and any convergence check would then be reading.
+    """
     network, demand = siouxfalls
-    independent = relative_gap(network, demand, converged)
-    assert converged.provenance.relative_gap == pytest.approx(independent, abs=1e-12)
+    result = assign(network, demand, "msa", **options)
+    independent = relative_gap(network, demand, result)
+    assert result.provenance.relative_gap == pytest.approx(independent, abs=1e-12)
+
+
+# --- 2b. warning on an unconverged run --------------------------------------
+
+
+def test_exhausted_budget_warns_with_passes_and_gap(siouxfalls):
+    network, demand = siouxfalls
+    with pytest.warns(ConvergenceWarning) as caught:
+        result = assign(network, demand, "msa", max_iterations=30, target_gap=1e-6)
+    message = str(caught[0].message)
+    assert "30 passes" in message
+    assert f"{result.provenance.relative_gap:.3e}" in message
+    assert "1.000e-06" in message
+    assert "max_iterations reached" in message
+
+
+def test_time_limit_warns_and_says_which_budget_ran_out(siouxfalls):
+    network, demand = siouxfalls
+    with pytest.warns(ConvergenceWarning, match="wall-clock budget"):
+        assign(network, demand, "msa", time_limit_s=0.0, max_iterations=50)
+
+
+def test_single_pass_warns_that_no_gap_was_measured(siouxfalls):
+    network, demand = siouxfalls
+    with pytest.warns(ConvergenceWarning, match="no gap measured"):
+        assign(network, demand, "msa", max_iterations=1)
+
+
+def test_reaching_the_target_does_not_warn(siouxfalls):
+    """The whole point: a converged run is silent."""
+    network, demand = siouxfalls
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConvergenceWarning)
+        result = assign(network, demand, "msa", target_gap=1e-3, max_iterations=1000)
+    assert result.provenance.relative_gap <= 1e-3
 
 
 # --- 3. the objective -------------------------------------------------------

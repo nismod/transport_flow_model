@@ -19,7 +19,8 @@ Implemented methods
     Options: ``max_iterations``, ``target_gap``, ``time_limit_s``,
     ``cost_function``, ``distance_cost``, ``directed``. It reports a gap
     trajectory, gets each gap free from the next all-or-nothing pass, and
-    never returns per-OD paths.
+    never returns per-OD paths. Stopping short of ``target_gap`` warns with
+    :class:`~transport_flow_model.ConvergenceWarning` rather than failing.
 
 ``"fw"``, ``"bfw"``, ``"staq"``
     Reserved names, registered to stubs that raise
@@ -30,6 +31,7 @@ Implemented methods
 from __future__ import annotations
 
 import time
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, Mapping, NamedTuple
 
@@ -38,6 +40,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from transport_flow_model import core
+from transport_flow_model.convergence import ConvergenceWarning
 from transport_flow_model.costs import BPR, CostFunction
 from transport_flow_model.demand import Demand
 from transport_flow_model.network import Network
@@ -239,17 +242,22 @@ class _MSAIterate(NamedTuple):
     flows : numpy.ndarray
         Current link flows, ``float64`` in network link order.
     gap : float or None
-        Relative gap measured during pass ``k``, which is the gap of the
-        iterate *entering* the pass — that is, of ``flows`` as it stood
-        before this pass averaged into it. ``None`` for ``k == 1``, where
-        no second load exists to measure against. When the loop stops on
-        the gap (or on the time limit) no averaging happens, so the last
-        iterate's ``gap`` is exactly the gap of its ``flows``.
+        Relative gap measured during pass ``k``. ``None`` for ``k == 1``,
+        where no second load exists to measure against.
+
+        While the loop continues this is the gap of the iterate *entering*
+        the pass, since ``flows`` has since been averaged. On the final
+        iterate no averaging happens — whichever way the loop stops — so
+        the last ``gap`` is always exactly the gap of its ``flows``.
+    stop : str or None
+        Why the loop ended: ``"converged"``, ``"time_limit"`` or
+        ``"max_iterations"``. ``None`` on every iterate but the last.
     """
 
     k: int
     flows: np.ndarray
     gap: float | None
+    stop: str | None = None
 
 
 class _MSAContext:
@@ -350,6 +358,9 @@ def _msa_iterates(
     travel_time = context.cost_function.travel_time
 
     x = context.aon(travel_time(0))
+    if max_iterations == 1:
+        yield _MSAIterate(1, x, None, "max_iterations")
+        return
     yield _MSAIterate(1, x, None)
 
     for k in range(2, max_iterations + 1):
@@ -365,8 +376,17 @@ def _msa_iterates(
         out_of_time = (
             time_limit_s is not None and time.perf_counter() - start >= time_limit_s
         )
-        if gap <= target_gap or out_of_time:
-            yield _MSAIterate(k, x, gap)
+        # Every exit stops *before* averaging, so the gap just measured is
+        # the gap of the flows handed back. Averaging once more would leave
+        # the reported gap describing the previous iterate.
+        if gap <= target_gap:
+            yield _MSAIterate(k, x, gap, "converged")
+            return
+        if out_of_time:
+            yield _MSAIterate(k, x, gap, "time_limit")
+            return
+        if k == max_iterations:
+            yield _MSAIterate(k, x, gap, "max_iterations")
             return
         x = x + (y - x) / k
         yield _MSAIterate(k, x, gap)
@@ -423,13 +443,23 @@ def _assign_msa(
     :func:`~transport_flow_model.relative_gap` call, is needed to decide
     when to stop.
 
-    That gap belongs to the iterate entering the pass. When the loop stops
-    because the target was reached (or the time limit expired) the averaging
-    is skipped, so the reported ``relative_gap`` is exactly the gap of the
-    returned flows. When instead the iteration budget runs out, the last
-    pass does average, and the reported gap is that of the previous iterate
-    — an upper bound on the returned one in practice, but not a measurement
-    of it.
+    That gap belongs to the iterate *entering* the pass, so however the loop
+    stops it stops before averaging again. The reported ``relative_gap`` is
+    therefore always a measurement of the flows handed back, whichever of
+    the three exits was taken — the target, the time limit, or the iteration
+    budget. Averaging once more on the last pass would leave the reported
+    gap describing the previous iterate instead.
+
+    **An unconverged run warns.** If the loop stops without reaching
+    ``target_gap`` it emits a
+    :class:`~transport_flow_model.ConvergenceWarning` naming the passes
+    performed, the gap reached and which budget ran out. The result is still
+    returned and still usable — a partly converged flow pattern is the right
+    answer to a screening run — but at the default 50 passes SiouxFalls
+    reaches a gap of around 1.5e-2, two orders above the default target, and
+    a caller who is not told that will read too much into the flows.
+    ``max_iterations=1`` is all-or-nothing with no second pass to measure a
+    gap against, so it warns that no gap was measured.
 
     When some demand is unassigned because its destination is unreachable,
     the gap is over the **assigned** demand only: unassigned demand loads no
@@ -469,6 +499,12 @@ def _assign_msa(
         if iterate.gap is not None:
             gap_history.append(iterate.gap)
     assert iterate is not None  # _msa_iterates always yields at least once
+    if iterate.stop != "converged":
+        warnings.warn(
+            _unconverged_message(iterate, target_gap),
+            ConvergenceWarning,
+            stacklevel=3,
+        )
 
     flows = iterate.flows
     assert context.unassigned is not None  # set by the first all-or-nothing pass
@@ -490,6 +526,27 @@ def _assign_msa(
         "iterations": iterate.k,
         "relative_gap": iterate.gap,
     }
+
+
+def _unconverged_message(iterate: _MSAIterate, target_gap: float) -> str:
+    """What an MSA run that missed its target should say about itself."""
+    passes = f"{iterate.k} pass" + ("" if iterate.k == 1 else "es")
+    budget = (
+        "the wall-clock budget ran out"
+        if iterate.stop == "time_limit"
+        else "max_iterations reached"
+    )
+    if iterate.gap is None:
+        reached = "with no gap measured (a gap needs a second pass)"
+    else:
+        reached = (
+            f"at relative gap {iterate.gap:.3e}, above the target {target_gap:.3e}"
+        )
+    return (
+        f"msa stopped after {passes} {reached}; {budget}. "
+        "Raise max_iterations or relax target_gap; "
+        "provenance.relative_gap and gap_history record what was reached."
+    )
 
 
 def _not_implemented(name: str, issue: str) -> AssignmentBackend:
