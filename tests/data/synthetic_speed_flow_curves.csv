@@ -1,0 +1,12 @@
+# SYNTHETIC test fixture for tests/test_costs.py (ws2-01) -- invented numbers,
+# not DfT/TAG speed-flow data. Two made-up curves, "1" with 4 breakpoints and
+# "2" with 3, so SpeedFlow.from_table exercises padding a shorter curve to
+# match a longer one in the same network.
+curve_id,flow_per_lane,speed
+1,0,100
+1,300,90
+1,600,40
+1,900,10
+2,0,60
+2,400,50
+2,800,20

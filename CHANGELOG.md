@@ -81,8 +81,27 @@ the versioning policy in the documentation).
   `datasets.BEST_KNOWN` for siouxfalls, anaheim and chicago-sketch) are
   exported from the top level. `link_costs` now delegates to
   `BPR.from_network(...).travel_time(...)`; its results are unchanged.
-  Conical (Spiess 1990) and DfT-style piecewise-linear curves, and mirrored
-  Rust implementations with golden tests, remain open in ws2-01.
+  Mirrored Rust implementations with golden tests remain open in ws2-01;
+  measured at 0.064–2.1% of an MSA pass, the cost function is not a hot
+  loop.
+- `Conical`, the Spiess (1990) conical volume-delay function, satisfying
+  `CostFunction`. Unlike BPR's power curve it stays finite and increasing
+  at every flow, which suits Newton-style bush methods. Its curvature
+  parameter `alpha` must exceed 1 and is **not** read from a link
+  attribute: every TNTP network already has an `alpha` attribute holding
+  BPR's 0.15, which is not a conical alpha. Pass it to `from_network`
+  instead; the default of 4.0 is a curve shape, not a calibration. The
+  closed-form integral and derivative are checked against quadrature and a
+  finite difference in `tests/test_costs.py`.
+- `SpeedFlow`, a piecewise-linear speed-against-flow-per-lane cost
+  function — the shape a DfT TAG speed-flow table takes — with
+  `SpeedFlow.from_table(curves, network)` to assign one curve per link from
+  a tidy `curve_id, flow_per_lane, speed` table. Speed is clamped below at
+  a positive `min_speed` so travel time and its integral stay finite;
+  outside the breakpoints the nearest segment's line is extrapolated.
+  **Units are the caller's responsibility and are not checked** — flow per
+  lane, speed and length must agree, or the result is silently wrong. The
+  test fixture is synthetic and clearly labelled; no TAG data ships yet.
 - `core.skim(network, od_pairs) -> pa.Table`: least-cost travel time per OD
   pair, one shortest-path tree per distinct origin over a network parsed
   once, with a null cost where the destination is unreachable.
