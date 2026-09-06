@@ -94,7 +94,7 @@ Every pull request should:
   `### Added` / `### Changed` / `### Removed` / `### Fixed` section. Anything
   that changes the public API — the top-level `transport_flow_model` exports,
   the JSON config schema, or the script CLIs — must say so; see
-  `docs/source/versioning.rst` for the versioning and deprecation policy.
+  `docs/source/reference/versioning.rst` for the versioning and deprecation policy.
 - **Build the docs** with `pixi run docs` and `pixi run doctest` if you touched
   anything under `docs/`, any docstring that appears in the API reference, or
   any behaviour a doctest exercises.

@@ -1,5 +1,5 @@
-Multiple Flows And Capacity
-===========================
+Constrain Assignment by Capacity
+================================
 
 When several OD pairs are assigned, ``link_flows`` aggregates their flows on
 shared links.
@@ -97,7 +97,7 @@ receives ``5`` and leaves ``5`` unassigned.
 This is a heuristic, and an order-dependent one: demand is taken pair by
 pair, so which pair gets the last of a scarce link depends on the order the
 pairs arrive in. It answers "how much of this demand fits", not "where would
-traffic settle" — that is :doc:`equilibrium`.
+traffic settle" — that is :doc:`../explanation/equilibrium`.
 
 Existing link loads
 -------------------

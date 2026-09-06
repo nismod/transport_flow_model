@@ -1,5 +1,5 @@
-Data Models
-===========
+The Data Model
+==============
 
 Four objects carry everything through a run:
 
@@ -116,7 +116,7 @@ Reading tables from disk
 Input files rarely use these column names. Rename on the way in — or let a
 JSON config do it for you, which is what
 :class:`~transport_flow_model.RunConfig` is for (see
-:doc:`configuration`).
+:doc:`../reference/configuration`).
 
 >>> import tempfile
 >>> with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,5 +1,5 @@
-Losses
-======
+Criticality and Rerouting Losses
+================================
 
 A rerouting loss is what a disruption costs the flows that survive it: for
 each OD pair, its disrupted path cost minus its baseline path cost, over the

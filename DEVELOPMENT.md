@@ -189,4 +189,4 @@ top-level `transport_flow_model` exports plus the JSON config schema and
 script CLIs. Breaking changes and deprecations are recorded in
 `CHANGELOG.md`, and the full policy (including result bit-stability across
 patch releases and the deprecation window) is documented in
-`docs/source/versioning.rst`.
+`docs/source/reference/versioning.rst`.

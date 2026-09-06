@@ -24,47 +24,65 @@ step (and a Rust toolchain):
 Contributors should use `pixi <https://pixi.prefix.dev>`_ instead — see
 :doc:`development`.
 
-At a glance
------------
+Where to start
+--------------
 
-.. code-block:: python
+This documentation is organised along `Diátaxis <https://diataxis.fr>`_
+lines, so what you need depends on what you are doing:
 
-   from transport_flow_model import Network, Demand, assign, disrupt
+- **New here?** :doc:`tutorials/getting-started` takes you from a fresh
+  install to an assigned, converged and disrupted network in one sitting.
+- **Have a job to do?** The :ref:`how-to guides <how-to-guides>` each solve
+  one problem — converge an assignment, evaluate disruptions, estimate a
+  demand matrix.
+- **Need a fact?** :doc:`reference/api` documents every public name, and
+  :doc:`reference/configuration` the JSON schema.
+- **Want to understand it?** The :ref:`explanation <explanation>` pages
+  cover why equilibrium matters, what the relative gap measures, and how
+  criticality rankings can mislead.
 
-   network = Network.from_dataframe(links)   # edge_from, edge_to, edge_id, cost, ...
-   demand = Demand.from_dataframe(od)        # origin_id, destination_id, value
-
-   result = assign(network, demand, method="sequential", include_paths=True)
-   result.link_flows          # per-link flow
-   result.skims               # per-OD-pair cost
-
-   summary = disrupt(network, scenarios, base=result).summary()
-
-Start with :doc:`guides/data-models` for the objects involved, then
-:doc:`guides/least-cost-allocation` and :doc:`guides/equilibrium` for
-assignment, and :doc:`guides/disruptions` for scenario analysis. Runs can be
-driven from a JSON file instead — see :doc:`guides/configuration`.
+Design decisions and internals live in the repository rather than here:
+``ARCHITECTURE.md`` for how the code fits together, ``docs/adr/`` for the
+decision record, and ``CONTRIBUTING.md`` for development workflow.
 
 .. toctree::
    :maxdepth: 2
-   :caption: User guides
+   :caption: Tutorial
 
-   guides/data-models
-   guides/datasets
-   guides/od-estimation
-   guides/least-cost-allocation
-   guides/equilibrium
-   guides/multiple-flows-and-capacity
-   guides/disruptions
-   guides/losses
-   guides/configuration
+   tutorials/getting-started
+
+.. _how-to-guides:
+
+.. toctree::
+   :maxdepth: 2
+   :caption: How-to guides
+
+   how-to/assign-demand
+   how-to/converge-an-assignment
+   how-to/constrain-by-capacity
+   how-to/evaluate-disruptions
+   how-to/estimate-od-demand
+   how-to/run-from-a-config
 
 .. toctree::
    :maxdepth: 2
    :caption: Reference
 
-   api
-   versioning
+   reference/api
+   reference/configuration
+   reference/datasets
+   reference/versioning
+
+.. _explanation:
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Explanation
+
+   explanation/data-models
+   explanation/equilibrium
+   explanation/criticality-and-losses
+   explanation/radiation-model
 
 .. toctree::
    :maxdepth: 2

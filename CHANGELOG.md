@@ -165,6 +165,27 @@ the versioning policy in the documentation).
 
 ### Changed
 
+- **The documentation is restructured along Diátaxis lines**, into
+  `tutorials/`, `how-to/`, `reference/` and `explanation/`. Every page has
+  moved, so **published URLs under the old paths break** — the docs site has
+  no version selector and no redirects. Previously everything lived in
+  `guides/` and was, in Diátaxis terms, explanation-with-examples regardless
+  of what the page was named.
+  - New `tutorials/getting-started`: assign SiouxFalls, measure how far the
+    result is from equilibrium, converge it, then remove the busiest link
+    and read the loss. All on vendored data, every step executed.
+  - How-to pages are named for the goal (`converge-an-assignment`,
+    `evaluate-disruptions`, `estimate-od-demand`, `run-from-a-config`)
+    rather than the feature.
+  - `od-estimation` is split into `how-to/estimate-od-demand` and
+    `explanation/radiation-model`. Its twelve skipped doctests are now
+    executed — which surfaced that its "Integrating with Flow Allocation"
+    example could never have run: the radiation model emits zone ids and
+    assignment needs node ids, so the example failed with a dtype error. The
+    how-to now maps between them.
+  - `equilibrium` and `configuration` are each split across their two modes.
+  - No `# doctest: +SKIP` remains anywhere in the docs; doctests rise from
+    181 to 192.
 - The user guides teach the v0 public API. `data-models`,
   `least-cost-allocation`, `multiple-flows-and-capacity`, `disruptions` and
   `losses` were written against `transport_flow_model.model`, which the API

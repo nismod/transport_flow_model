@@ -1,5 +1,5 @@
-Disruptions
-===========
+Evaluate Disruption Scenarios
+=============================
 
 :func:`~transport_flow_model.disrupt` takes a baseline assignment and a set
 of :class:`~transport_flow_model.Scenario` objects, and for each scenario
@@ -160,4 +160,4 @@ room for only part of the affected flow, the residual demand is isolated.
 >>> capacity_result.link_flows.to_pandas().set_index("edge_id")["flow"].to_dict()
 {'AB': 0, 'BC': 0, 'AD': 10, 'DC': 10}
 
-Comparing scenarios is the subject of :doc:`losses`.
+Comparing scenarios is the subject of :doc:`../explanation/criticality-and-losses`.

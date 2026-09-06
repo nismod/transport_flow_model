@@ -1,5 +1,5 @@
-Least-Cost Allocation
-=====================
+Assign Demand to Least-Cost Paths
+=================================
 
 :func:`~transport_flow_model.assign` with ``method="sequential"`` puts each
 OD pair's demand on its least-cost path, one pair at a time. The result
@@ -8,7 +8,7 @@ not be assigned, and — when asked for — the paths themselves.
 
 This is a single all-or-nothing pass: it takes no account of the congestion
 the assigned flow itself causes. For a solution where no traveller can
-improve their own cost by switching route, see :doc:`equilibrium`.
+improve their own cost by switching route, see :doc:`../explanation/equilibrium`.
 
 Single OD pair
 --------------
