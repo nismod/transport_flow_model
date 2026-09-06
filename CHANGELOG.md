@@ -44,6 +44,18 @@ the versioning policy in the documentation).
   (documented in the Sphinx docs under "Versioning and deprecation").
 - Sphinx API reference for the public API, including `relative_gap` and
   `link_costs`.
+- User guide "Equilibrium Assignment": all-or-nothing versus user
+  equilibrium, `assign(..., "msa")`, reading `relative_gap` and
+  `gap_history`, what `ConvergenceWarning` means, Boyce et al.'s 1e-4
+  threshold, and choosing between `BPR`, `Conical` and `SpeedFlow` —
+  including why a run must be scored with the curve it was assigned with
+  (the same converged siouxfalls flows read 9.963e-04 against BPR and
+  6.262e-02 against a conical curve).
+- User guide "Config-Driven Runs": the JSON schema, its blocks, method
+  options, naming a cost function, and the two scripts. The config schema is
+  versioned public interface and previously had no user-facing guide.
+- The docs landing page now describes the package and how to install it
+  instead of opening on a bare table of contents.
 - `scripts/profile_gap_cost.py` (`pixi run profile-gap-cost`): measures what
   evaluating the relative gap costs relative to an all-or-nothing pass.
   Recorded in the `convergence` module docstring, along with why it once
@@ -153,6 +165,14 @@ the versioning policy in the documentation).
 
 ### Changed
 
+- The user guides teach the v0 public API. `data-models`,
+  `least-cost-allocation`, `multiple-flows-and-capacity`, `disruptions` and
+  `losses` were written against `transport_flow_model.model`, which the API
+  reference labels deprecated and the versioning policy formally deprecates
+  — so the guides contradicted the reference, and a reader following them in
+  order learned the deprecated API end to end. They now use `Network`,
+  `Demand`, `assign`, `disrupt` and `Scenario`; every example reproduces the
+  same numbers as before. Doctests rise from 120 to 181, all executed.
 - `AssignmentConfig.options()` reads the registered backend's own signature
   instead of always emitting `capacity_constrained` and `directed`, and
   takes an optional `network` (needed only to build a `cost_function`). A

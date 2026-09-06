@@ -1,19 +1,24 @@
 Disruptions
 ===========
 
-``Network.disrupt`` reroutes OD flows whose existing ``edge_path`` includes a
-failed edge. The result separates rerouted flows, isolated demand, updated edge
-totals, and rerouting losses.
+:func:`~transport_flow_model.disrupt` takes a baseline assignment and a set
+of :class:`~transport_flow_model.Scenario` objects, and for each scenario
+reroutes the baseline flows whose path used a removed link. Flows that did
+not use one are left alone — that is what makes a scenario sweep affordable.
+
+Each :class:`~transport_flow_model.ScenarioResult` separates rerouted flow,
+isolated demand, updated link totals, and the rerouting loss per OD pair.
+The baseline must carry paths, so assign it with ``include_paths=True``.
 
 Isolated demand
 ---------------
 
-If a failed edge removes the only available path, the affected demand appears in
-``isolated_od`` and no rerouted flow is returned.
+If a failed link removes the only available path, the affected demand
+appears in ``isolated`` and no rerouted flow is returned.
 
 >>> import pandas as pd
->>> from transport_flow_model.model import Network, ODFlows
->>> network = Network(
+>>> from transport_flow_model import Network, Demand, Scenario, assign, disrupt
+>>> network = Network.from_dataframe(
 ...     pd.DataFrame(
 ...         {
 ...             "edge_from": ["A", "B"],
@@ -24,31 +29,30 @@ If a failed edge removes the only available path, the affected demand appears in
 ...         }
 ...     )
 ... )
->>> existing_flows = ODFlows(
+>>> demand = Demand.from_dataframe(
 ...     pd.DataFrame(
 ...         {
 ...             "origin_id": ["A"],
 ...             "destination_id": ["C"],
-...             "flow": [10],
-...             "edge_path": [["AB", "BC"]],
-...             "cost": [2],
+...             "value": [10],
 ...         }
 ...     )
 ... )
->>> isolated = network.disrupt(existing_flows, ["AB"], directed=True)
->>> isolated.rerouted_flows.to_dataframe().empty
-True
->>> isolated.isolated_od.to_dataframe().to_dict("records")
-[{'origin_id': 'A', 'destination_id': 'C', 'flow': 10}]
+>>> base = assign(network, demand, "sequential", include_paths=True)
+>>> results = disrupt(network, [Scenario.remove_links("AB_fails", ["AB"])], base=base)
+>>> isolated = results.results[0]
+>>> isolated.rerouted.num_rows
+0
+>>> isolated.isolated.to_pandas().to_dict("records")
+[{'origin_id': 'A', 'destination_id': 'C', 'value': 10}]
 
 Rerouting to an alternative path
 --------------------------------
 
 If an alternative path exists, the affected flow is rerouted. Comparing the
-original path cost with the disrupted path cost gives rerouting losses as
-``result.losses``.
+original path cost with the disrupted one gives the rerouting loss.
 
->>> reroute_network = Network(
+>>> reroute_network = Network.from_dataframe(
 ...     pd.DataFrame(
 ...         {
 ...             "edge_from": ["A", "B", "A"],
@@ -59,21 +63,28 @@ original path cost with the disrupted path cost gives rerouting losses as
 ...         }
 ...     )
 ... )
->>> result = reroute_network.disrupt(existing_flows, ["AB"], directed=True)
->>> result.rerouted_flows.to_dataframe().to_dict("records")
+>>> base = assign(reroute_network, demand, "sequential", include_paths=True)
+>>> results = disrupt(
+...     reroute_network, [Scenario.remove_links("AB_fails", ["AB"])], base=base
+... )
+>>> result = results.results[0]
+>>> [
+...     {**row, "edge_path": list(row["edge_path"])}
+...     for row in result.rerouted.to_pandas().to_dict("records")
+... ]
 [{'origin_id': 'A', 'destination_id': 'C', 'flow': 10, 'edge_path': ['AC'], 'cost': 5}]
->>> result.losses.to_dataframe().to_dict("records")
+>>> result.losses.to_pandas().to_dict("records")
 [{'origin_id': 'A', 'destination_id': 'C', 'flow': 10, 'initial_cost': 2, 'disrupted_cost': 5, 'rerouting_loss': 3}]
->>> result.network_flows.to_dataframe().set_index("edge_id")["flow"].to_dict()
+>>> result.link_flows.to_pandas().set_index("edge_id")["flow"].to_dict()
 {'AB': 0, 'BC': 0, 'AC': 10}
 
 Unaffected flows stay on the network
 ------------------------------------
 
-Only OD flows whose path includes a failed edge are rerouted. Other OD flows
-remain in the returned ``network_flows`` totals.
+Only flows whose path includes a failed link are rerouted. Others remain in
+the returned link totals.
 
->>> partial_network = Network(
+>>> partial_network = Network.from_dataframe(
 ...     pd.DataFrame(
 ...         {
 ...             "edge_from": ["A", "B", "A", "C"],
@@ -84,29 +95,38 @@ remain in the returned ``network_flows`` totals.
 ...         }
 ...     )
 ... )
->>> partial_flows = ODFlows(
+>>> partial_demand = Demand.from_dataframe(
 ...     pd.DataFrame(
 ...         {
 ...             "origin_id": ["A", "C"],
 ...             "destination_id": ["C", "D"],
-...             "flow": [10, 4],
-...             "edge_path": [["AB", "BC"], ["CD"]],
-...             "cost": [2, 1],
+...             "value": [10, 4],
 ...         }
 ...     )
 ... )
->>> partial = partial_network.disrupt(partial_flows, ["AB"], directed=True)
->>> partial.network_flows.to_dataframe().set_index("edge_id")["flow"].to_dict()
+>>> base = assign(partial_network, partial_demand, "sequential", include_paths=True)
+>>> partial = disrupt(
+...     partial_network, [Scenario.remove_links("AB_fails", ["AB"])], base=base
+... ).results[0]
+>>> partial.link_flows.to_pandas().set_index("edge_id")["flow"].to_dict()
 {'AB': 0, 'BC': 0, 'AC': 10, 'CD': 4}
 
-Capacity-constrained disruption
--------------------------------
+A scenario whose links carried no baseline flow at all cannot change
+anything, so it is skipped rather than evaluated, and named in ``skipped``.
 
-Disruption rerouting is capacity constrained by default. If the alternate path
-has only enough capacity for part of the affected flow, any residual demand is
-isolated.
+>>> results = disrupt(
+...     partial_network, [Scenario.remove_links("CD_fails", ["AC"])], base=base
+... )
+>>> results.results, [scenario.id for scenario in results.skipped]
+((), ['CD_fails'])
 
->>> capacity_network = Network(
+Capacity-constrained rerouting
+------------------------------
+
+Rerouting is capacity constrained by default. If the alternative path has
+room for only part of the affected flow, the residual demand is isolated.
+
+>>> capacity_network = Network.from_dataframe(
 ...     pd.DataFrame(
 ...         {
 ...             "edge_from": ["A", "B", "A", "D"],
@@ -117,23 +137,27 @@ isolated.
 ...         }
 ...     )
 ... )
->>> capacity_flows = ODFlows(
+>>> capacity_demand = Demand.from_dataframe(
 ...     pd.DataFrame(
 ...         {
 ...             "origin_id": ["A"],
 ...             "destination_id": ["C"],
-...             "flow": [15],
-...             "edge_path": [["AB", "BC"]],
-...             "cost": [2],
+...             "value": [15],
 ...         }
 ...     )
 ... )
->>> capacity_result = capacity_network.disrupt(
-...     capacity_flows, ["AB"], directed=True
-... )
->>> capacity_result.rerouted_flows.to_dataframe().to_dict("records")
+>>> base = assign(capacity_network, capacity_demand, "sequential", include_paths=True)
+>>> capacity_result = disrupt(
+...     capacity_network, [Scenario.remove_links("AB_fails", ["AB"])], base=base
+... ).results[0]
+>>> [
+...     {**row, "edge_path": list(row["edge_path"])}
+...     for row in capacity_result.rerouted.to_pandas().to_dict("records")
+... ]
 [{'origin_id': 'A', 'destination_id': 'C', 'flow': 10, 'edge_path': ['AD', 'DC'], 'cost': 6}]
->>> capacity_result.isolated_od.to_dataframe().to_dict("records")
-[{'origin_id': 'A', 'destination_id': 'C', 'flow': 5}]
->>> capacity_result.network_flows.to_dataframe().set_index("edge_id")["flow"].to_dict()
+>>> capacity_result.isolated.to_pandas().to_dict("records")
+[{'origin_id': 'A', 'destination_id': 'C', 'value': 5}]
+>>> capacity_result.link_flows.to_pandas().set_index("edge_id")["flow"].to_dict()
 {'AB': 0, 'BC': 0, 'AD': 10, 'DC': 10}
+
+Comparing scenarios is the subject of :doc:`losses`.
