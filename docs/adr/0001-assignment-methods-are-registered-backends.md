@@ -70,6 +70,35 @@ gap, wall time, seed, package and core versions). This is what makes
 provenance uniform across methods — a backend that built its own result would
 be free to lie about, or forget, any of it.
 
+### The signature is machine-read, so it is load-bearing
+
+`AssignmentConfig.options()` in `config.py` decides what to pass a backend by
+reading `inspect.signature(METHODS[method]).parameters` — it emits
+`capacity_constrained` for `"sequential"` and not for `"msa"`, because that is
+what the two functions declare. Before this it emitted both unconditionally,
+so `{"method": "msa"}` in a config file raised `TypeError` and config-driven
+MSA could not run at all.
+
+That turns "declare them as explicit keyword parameters with defaults" above
+from advice into a requirement other code depends on. A backend that took
+`**kwargs` instead would advertise no options, and a config would silently
+pass it none. The three parameters `assign()` supplies itself — `network`,
+`demand`, `include_paths` — are not options and are excluded by name.
+
+A config only ever *loses* an option it left at its default this way. An
+option the config explicitly sets and the method cannot accept raises
+instead: silently dropping a requested `cost_function` would assign the run
+with BPR while the config asked for another curve, with nothing in the
+results to show it.
+
+Cost functions follow the same shape a step lower down: `COST_FUNCTIONS` in
+`costs.py` maps a name to a class and `build_cost_function(name, network,
+**params)` builds one, so a curve can be named from a config exactly as a
+method can. Unlike backends they have no uniform constructor —
+`SpeedFlow.from_table` needs a curve table as well as a network — so
+`build_cost_function` bridges that rather than the classes pretending to a
+signature they do not share.
+
 ### Link flows stay `float64` for iterative methods
 
 `link_flows_table(links, network_flows)` applies `coerce_integral` by default,

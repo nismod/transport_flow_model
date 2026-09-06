@@ -42,7 +42,7 @@ def main(config: RunConfig):
         network,
         config.load_scenarios(),
         base=base,
-        **config.assignment.options(),
+        **config.assignment.options(network),
     )
 
     losses = pd.concat(

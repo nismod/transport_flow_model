@@ -14,7 +14,13 @@ import pyarrow as pa
 import pytest
 
 from transport_flow_model import BPR, Network, beckmann_objective, datasets, link_costs
-from transport_flow_model.costs import Conical, CostFunction, SpeedFlow
+from transport_flow_model.costs import (
+    COST_FUNCTIONS,
+    Conical,
+    CostFunction,
+    SpeedFlow,
+    build_cost_function,
+)
 
 DATA = Path(__file__).parent / "data"
 
@@ -222,6 +228,61 @@ def test_bpr_and_conical_satisfy_the_cost_function_protocol(siouxfalls):
     network, _ = siouxfalls
     assert isinstance(BPR.from_network(network), CostFunction)
     assert isinstance(Conical.from_network(network), CostFunction)
+
+
+# --- Cost function registry -------------------------------------------------
+
+
+def test_build_cost_function_bpr_matches_from_network(siouxfalls):
+    network, flows = siouxfalls
+    built = build_cost_function("bpr", network, distance_cost=0.04)
+    expected = BPR.from_network(network, distance_cost=0.04)
+    np.testing.assert_array_equal(built.travel_time(flows), expected.travel_time(flows))
+
+
+def test_build_cost_function_conical_forwards_params(siouxfalls):
+    network, flows = siouxfalls
+    built = build_cost_function("conical", network, alpha=5.0)
+    expected = Conical.from_network(network, alpha=5.0)
+    np.testing.assert_array_equal(built.travel_time(flows), expected.travel_time(flows))
+
+
+def test_build_cost_function_unknown_name_raises(siouxfalls):
+    network, _ = siouxfalls
+    with pytest.raises(ValueError, match="nonexistent") as excinfo:
+        build_cost_function("nonexistent", network)
+    # The message names every registered function.
+    for name in COST_FUNCTIONS:
+        assert name in str(excinfo.value)
+
+
+def test_build_cost_function_rejects_an_unknown_parameter(siouxfalls):
+    network, _ = siouxfalls
+    with pytest.raises(TypeError):
+        build_cost_function("bpr", network, not_a_real_parameter=1.0)
+    with pytest.raises(TypeError):
+        build_cost_function("conical", network, not_a_real_parameter=1.0)
+
+
+def test_build_cost_function_speed_flow_requires_curves(speed_flow_network):
+    # Distinct from SpeedFlow.from_table's own "curves must be a pyarrow
+    # Table..." TypeError (also raised on a bad curves value): this is
+    # build_cost_function's own check for a missing 'curves' keyword.
+    with pytest.raises(TypeError, match="requires a 'curves' keyword"):
+        build_cost_function("speed_flow", speed_flow_network)
+
+
+def test_build_cost_function_speed_flow_matches_from_table(
+    speed_flow_curves, speed_flow_network
+):
+    built = build_cost_function(
+        "speed_flow", speed_flow_network, curves=speed_flow_curves, min_speed=8.0
+    )
+    expected = SpeedFlow.from_table(
+        speed_flow_curves, speed_flow_network, min_speed=8.0
+    )
+    flows = np.array([600.0, 400.0])
+    np.testing.assert_array_equal(built.travel_time(flows), expected.travel_time(flows))
 
 
 # --- Conical (Spiess 1990) -------------------------------------------------

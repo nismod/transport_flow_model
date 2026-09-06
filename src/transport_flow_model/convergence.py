@@ -15,7 +15,8 @@ scenarios are trustworthy.
 
 Link travel times come from :mod:`transport_flow_model.costs`, whose cost
 functions satisfy the :class:`~transport_flow_model.costs.CostFunction`
-protocol. :func:`link_costs` evaluates the default one,
+protocol. :func:`link_costs` and :func:`relative_gap` accept one via
+``cost_function``, defaulting to
 :class:`~transport_flow_model.costs.BPR`, built from the network's link
 attributes: ``cost * (1 + alpha * (x / capacity)^beta) + distance_cost *
 length``, the convention used by the TNTP datasets (see
@@ -66,7 +67,7 @@ import numpy as np
 import pyarrow as pa
 
 from transport_flow_model import core
-from transport_flow_model.costs import BPR, _as_float_array, _flow_array
+from transport_flow_model.costs import BPR, CostFunction, _as_float_array, _flow_array
 from transport_flow_model.demand import Demand
 from transport_flow_model.network import Network
 
@@ -89,28 +90,37 @@ def link_costs(
     network: Network,
     flows: Any,
     *,
+    cost_function: CostFunction | None = None,
     distance_cost: float = 0.0,
 ) -> np.ndarray:
     """Congested link travel times ``t_a(x_a)``, in network link order.
 
-    Evaluates :class:`transport_flow_model.costs.BPR` built from the
-    network's link attributes; use that class directly if you also need the
-    integral or the derivative.
+    Evaluates ``cost_function``, defaulting to
+    :class:`transport_flow_model.costs.BPR` built from the network's link
+    attributes; use that class directly if you also need the integral or
+    the derivative.
 
     Parameters
     ----------
     network : Network
-        Must carry a ``cost`` link attribute (free-flow time). If
-        ``alpha``, ``beta`` and ``capacity`` attributes are present the BPR
-        volume-delay function is applied; otherwise costs are flow-independent.
+        Must carry a ``cost`` link attribute (free-flow time) unless
+        ``cost_function`` is given. If ``alpha``, ``beta`` and ``capacity``
+        attributes are present the BPR volume-delay function is applied;
+        otherwise costs are flow-independent.
     flows : array-like
         Link flows ``x_a`` in network link order.
+    cost_function : CostFunction, optional
+        Volume-delay function; defaults to
+        :meth:`~transport_flow_model.BPR.from_network`.
     distance_cost : float
         Generalized-cost weight on the ``length`` attribute (e.g. 0.04 for
-        the published chicago-sketch solution).
+        the published chicago-sketch solution). Passed to that default and
+        unused when ``cost_function`` is given.
     """
     x = _as_float_array(flows, network.n_links, "flows")
-    return BPR.from_network(network, distance_cost=distance_cost).travel_time(x)
+    if cost_function is None:
+        cost_function = BPR.from_network(network, distance_cost=distance_cost)
+    return cost_function.travel_time(x)
 
 
 def relative_gap(
@@ -118,6 +128,7 @@ def relative_gap(
     demand: Demand,
     flows: Any,
     *,
+    cost_function: CostFunction | None = None,
     distance_cost: float = 0.0,
     directed: bool = True,
 ) -> float:
@@ -128,11 +139,14 @@ def relative_gap(
     link order. Zero at user equilibrium; Boyce et al. (2004) recommend
     converging below 1e-4.
 
+    ``cost_function`` defaults to :meth:`BPR.from_network`; ``distance_cost``
+    is passed to that default and is unused when a cost function is given.
+
     Raises :class:`ValueError` if any demanded destination is unreachable at
     congested costs, or if total shortest-path travel time is zero.
     """
     x = _flow_array(network, flows)
-    t = link_costs(network, x, distance_cost=distance_cost)
+    t = link_costs(network, x, cost_function=cost_function, distance_cost=distance_cost)
     total_cost = float(np.dot(t, x))
 
     links = network.to_table()

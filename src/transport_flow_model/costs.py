@@ -57,8 +57,13 @@ flow-per-lane breakpoints, clamped below at a floor speed so travel time
 stays finite.
 
 Mirrored implementations of all three in the Rust core, golden-tested
-against these, are still open in ws2-01, as is selecting a cost function
-from :func:`~transport_flow_model.assign`.
+against these, are still open (a follow-up to ws2-01). Selecting a cost
+function by name — from a config file, say — goes through
+:data:`COST_FUNCTIONS` and :func:`build_cost_function`; callers that already
+have a :class:`CostFunction` in hand (or want :class:`BPR`, the default) can
+just pass it straight to :func:`~transport_flow_model.assign`,
+:func:`~transport_flow_model.link_costs` or
+:func:`~transport_flow_model.relative_gap`.
 """
 
 from __future__ import annotations
@@ -719,6 +724,57 @@ def _curves_table(curves: pa.Table | pa.RecordBatch | pd.DataFrame) -> pa.Table:
         raise TypeError(
             "curves must be a pyarrow Table or RecordBatch, or a pandas DataFrame"
         ) from None
+
+
+#: Registered cost functions, keyed by name.
+COST_FUNCTIONS: dict[str, type] = {
+    "bpr": BPR,
+    "conical": Conical,
+    "speed_flow": SpeedFlow,
+}
+
+
+def build_cost_function(name: str, network: Network, **params: Any) -> CostFunction:
+    """Build a registered :class:`CostFunction` by name.
+
+    ``name`` selects a class from :data:`COST_FUNCTIONS`; an unknown name
+    raises :class:`ValueError` naming the ones available, exactly as
+    :func:`~transport_flow_model.assign` does for an unknown method.
+
+    ``BPR`` and ``Conical`` are built with ``cls.from_network(network,
+    **params)`` — ``params`` is ``distance_cost`` for ``BPR``, ``alpha``
+    and/or ``distance_cost`` for ``Conical``. ``SpeedFlow`` is the odd one
+    out: :meth:`SpeedFlow.from_table` needs a curve table as well as a
+    network, so here it is passed as the keyword-only ``curves`` in
+    ``params`` (``build_cost_function("speed_flow", network, curves=...,
+    min_speed=8.0)``) rather than as a positional argument, keeping this
+    function's own signature — ``(name, network, **params)`` — the same for
+    every registered cost function regardless of what its constructor
+    needs.
+
+    Every parameter is forwarded as a keyword argument to the underlying
+    classmethod, so an unknown or misspelled one (including a missing
+    ``curves`` for ``speed_flow``) raises :class:`TypeError` from that call
+    rather than being silently dropped.
+    """
+    try:
+        cls = COST_FUNCTIONS[name]
+    except KeyError:
+        raise ValueError(
+            f"Unknown cost function {name!r}; "
+            f"available: {', '.join(sorted(COST_FUNCTIONS))}"
+        ) from None
+    if cls is SpeedFlow:
+        try:
+            curves = params.pop("curves")
+        except KeyError:
+            raise TypeError(
+                "build_cost_function('speed_flow', ...) requires a 'curves' "
+                "keyword argument: SpeedFlow.from_table needs a curve table "
+                "in addition to the network"
+            ) from None
+        return cls.from_table(curves, network, **params)
+    return cls.from_network(network, **params)
 
 
 def beckmann_objective(

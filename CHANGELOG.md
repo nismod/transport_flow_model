@@ -102,6 +102,16 @@ the versioning policy in the documentation).
   **Units are the caller's responsibility and are not checked** — flow per
   lane, speed and length must agree, or the result is silently wrong. The
   test fixture is synthetic and clearly labelled; no TAG data ships yet.
+  `Conical` and `SpeedFlow` are exported from the top level alongside `BPR`.
+- `COST_FUNCTIONS` and `build_cost_function(name, network, **params)` in
+  `costs`, mirroring `assignment.METHODS`, so a curve can be named from a
+  config as a method can. `link_costs` and `relative_gap` take a
+  `cost_function=`, defaulting to BPR exactly as before, so a run can be
+  scored with the curve it was assigned with rather than silently against
+  BPR. `beckmann_objective` already took one.
+- `AssignmentConfig` takes `cost_function` (a `name` plus its parameters)
+  and a free-form `method_options`, and `options(network=None)` is now
+  method-aware.
 - `core.skim(network, od_pairs) -> pa.Table`: least-cost travel time per OD
   pair, one shortest-path tree per distinct origin over a network parsed
   once, with a null cost where the destination is unreachable.
@@ -143,6 +153,15 @@ the versioning policy in the documentation).
 
 ### Changed
 
+- `AssignmentConfig.options()` reads the registered backend's own signature
+  instead of always emitting `capacity_constrained` and `directed`, and
+  takes an optional `network` (needed only to build a `cost_function`). A
+  config naming `"msa"` previously raised `TypeError: _assign_msa() got an
+  unexpected keyword argument 'capacity_constrained'`, so config-driven MSA
+  could not run at all. An option the config *sets* that the method cannot
+  accept now raises rather than being dropped; one left at its default is
+  dropped silently. ADR-0001 records that this makes a backend's declared
+  keyword parameters load-bearing.
 - The Rust Arrow readers resolve and downcast each numeric column once per
   record batch instead of looking it up by name for every row. Parsing a
   network is roughly 1.6-1.8x faster, so a `core.shortest_paths_from` call

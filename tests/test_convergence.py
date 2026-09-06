@@ -5,6 +5,8 @@ import pandas as pd
 import pytest
 
 from transport_flow_model import (
+    BPR,
+    Conical,
     Demand,
     Network,
     assign,
@@ -76,6 +78,70 @@ def test_zero_demand_raises(parallel_network):
 def test_wrong_flow_length_raises(parallel_network, unit_demand):
     with pytest.raises(ValueError, match="shape"):
         relative_gap(parallel_network, unit_demand, [1.0])
+
+
+def test_link_costs_with_no_cost_function_matches_todays_bpr_result(siouxfalls):
+    network, _ = siouxfalls
+    flows = np.arange(network.n_links, dtype="float64")
+    np.testing.assert_array_equal(
+        link_costs(network, flows), BPR.from_network(network).travel_time(flows)
+    )
+
+
+def test_link_costs_accepts_an_explicit_cost_function(siouxfalls):
+    network, _ = siouxfalls
+    flows = np.arange(network.n_links, dtype="float64")
+    cost_function = Conical.from_network(network)
+    np.testing.assert_array_equal(
+        link_costs(network, flows, cost_function=cost_function),
+        cost_function.travel_time(flows),
+    )
+
+
+def test_relative_gap_with_no_cost_function_matches_todays_bpr_result(
+    parallel_network, unit_demand
+):
+    flows = [4.0, 6.0]
+    gap_default = relative_gap(parallel_network, unit_demand, flows)
+    gap_explicit = relative_gap(
+        parallel_network,
+        unit_demand,
+        flows,
+        cost_function=BPR.from_network(parallel_network),
+    )
+    assert gap_default == gap_explicit
+
+
+def test_relative_gap_accepts_an_explicit_cost_function():
+    # A Conical cost function on a network that also carries alpha/beta:
+    # the network *would* build a different (BPR) result if `cost_function`
+    # were silently ignored and the default recomputed instead, so this
+    # only passes if `cost_function` is genuinely used end to end.
+    network = Network.from_dataframe(
+        pd.DataFrame(
+            {
+                "edge_from": [1, 1],
+                "edge_to": [2, 2],
+                "edge_id": [0, 1],
+                "cost": [1.0, 1.0],
+                "capacity": [100.0, 10.0],
+                "alpha": [0.15, 0.15],
+                "beta": [4.0, 4.0],
+            }
+        )
+    )
+    demand = Demand.from_dataframe(
+        pd.DataFrame({"origin_id": [1], "destination_id": [2], "value": [10.0]})
+    )
+    cost_function = Conical.from_network(network)
+    flows = [6.0, 4.0]
+    t = cost_function.travel_time(np.array(flows))
+    total_cost = float(np.dot(t, flows))
+    min_cost = float(demand.total * min(t))
+    expected = (total_cost - min_cost) / min_cost
+    assert relative_gap(
+        network, demand, flows, cost_function=cost_function
+    ) == pytest.approx(expected)
 
 
 def test_bpr_link_costs_match_published_costs(siouxfalls):

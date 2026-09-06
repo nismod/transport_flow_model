@@ -12,6 +12,7 @@ matching the behaviour of the original scripts.
 
 from __future__ import annotations
 
+import inspect
 import json
 import warnings
 from pathlib import Path
@@ -19,6 +20,8 @@ from pathlib import Path
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
+from transport_flow_model.assignment import METHODS
+from transport_flow_model.costs import build_cost_function
 from transport_flow_model.demand import Demand
 from transport_flow_model.disruption import Scenario
 from transport_flow_model.network import Network
@@ -95,6 +98,11 @@ class ScenariosConfig(BaseModel):
     id_column: str = "edge_id"
 
 
+#: Backend parameters that are not caller-selectable options: ADR-0001 has
+#: :func:`~transport_flow_model.assign` supply all three itself.
+_NOT_OPTIONS = frozenset({"network", "demand", "include_paths"})
+
+
 class AssignmentConfig(BaseModel):
     """Assignment method and options, passed to
     :func:`transport_flow_model.assignment.assign`."""
@@ -104,12 +112,80 @@ class AssignmentConfig(BaseModel):
     method: str = "sequential"
     capacity_constrained: bool = True
     directed: bool = True
+    cost_function: dict | None = None
+    method_options: dict = Field(default_factory=dict)
 
-    def options(self) -> dict:
-        return {
+    def options(self, network: Network | None = None) -> dict:
+        """Keyword arguments for ``assign(..., method, **options())``.
+
+        ``capacity_constrained`` and ``directed`` are included only when the
+        backend registered under ``method`` (see
+        :data:`transport_flow_model.assignment.METHODS`) actually declares
+        them as parameters — read off the backend's own signature with
+        :func:`inspect.signature` rather than a hardcoded per-method list,
+        so a new or changed backend is picked up automatically. This is
+        safe here specifically because backends are plain functions with
+        explicit keyword parameters (see ADR-0001): nothing wraps them in a
+        generic ``(*args, **kwargs)``, so their signature *is* the option
+        contract, not a guess at one. A ``method`` not (yet) registered is
+        not an error here — every option is included unfiltered, and
+        :func:`~transport_flow_model.assign` raises when it looks the name
+        up itself.
+
+        ``cost_function`` — a ``{"name": ..., **params}`` dict — is built
+        with :func:`~transport_flow_model.costs.build_cost_function`
+        against ``network`` and included the same way, so passing
+        ``network`` in is only required when ``cost_function`` is set.
+
+        Only a field left at its default is dropped that way. A field the
+        config *sets* is an instruction, so a method that cannot accept it
+        raises :class:`ValueError` here rather than running as if it had
+        not been asked for. That distinction matters most for
+        ``cost_function``: silently dropping it would assign the run with
+        BPR while the config asked for another curve, and nothing in the
+        results would say so.
+
+        ``method_options`` (free-form, e.g. MSA's ``max_iterations``) are
+        passed straight through, unfiltered: they are exactly what the
+        caller wants that backend to receive, and an unknown or misspelled
+        one should raise from the backend call, not be silently dropped
+        here.
+        """
+        candidates: dict = {
             "capacity_constrained": self.capacity_constrained,
             "directed": self.directed,
         }
+        if self.cost_function is not None:
+            if network is None:
+                raise ValueError(
+                    "AssignmentConfig.cost_function is set; options() needs "
+                    "a network to build it"
+                )
+            name = self.cost_function["name"]
+            params = {k: v for k, v in self.cost_function.items() if k != "name"}
+            candidates["cost_function"] = build_cost_function(name, network, **params)
+
+        backend = METHODS.get(self.method)
+        if backend is not None:
+            accepted = inspect.signature(backend).parameters
+            unsupported = sorted(
+                name
+                for name in candidates
+                if name not in accepted and name in self.model_fields_set
+            )
+            if unsupported:
+                # ADR-0001: a backend is called as ``backend(network,
+                # demand, include_paths=..., **options)``, so its options
+                # are its parameters less those three.
+                options = sorted(set(accepted) - _NOT_OPTIONS)
+                raise ValueError(
+                    f"Assignment method {self.method!r} does not accept "
+                    f"{', '.join(repr(name) for name in unsupported)}, which "
+                    f"this config sets; its options are "
+                    f"{', '.join(options)}"
+                )
+            candidates = {k: v for k, v in candidates.items() if k in accepted}
+        return {**candidates, **self.method_options}
 
 
 class RunConfig(BaseModel):

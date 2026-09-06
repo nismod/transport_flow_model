@@ -8,7 +8,7 @@ the changelog and the versioning policy in the documentation.
 from .assignment import AssignmentResult, Provenance, assign
 from .config import RunConfig, load_config
 from .convergence import ConvergenceWarning, link_costs, relative_gap
-from .costs import BPR, beckmann_objective
+from .costs import BPR, Conical, SpeedFlow, beckmann_objective
 from .demand import Demand
 from .disruption import (
     DisruptionResults,
@@ -30,6 +30,7 @@ except ImportError:  # pragma: no cover - package not built/installed
 __all__ = [
     "AssignmentResult",
     "BPR",
+    "Conical",
     "ConvergenceWarning",
     "Demand",
     "DisruptionResults",
@@ -40,6 +41,7 @@ __all__ = [
     "RunConfig",
     "Scenario",
     "ScenarioResult",
+    "SpeedFlow",
     "__version__",
     "assign",
     "beckmann_objective",

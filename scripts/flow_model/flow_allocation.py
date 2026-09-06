@@ -16,12 +16,13 @@ def main(config: RunConfig):
     results_folder.mkdir(parents=True, exist_ok=True)
 
     logging.info("assign (method=%s)", config.assignment.method)
+    network = config.load_network()
     result = assign(
-        config.load_network(),
+        network,
         config.load_demand(),
         config.assignment.method,
         include_paths=True,
-        **config.assignment.options(),
+        **config.assignment.options(network),
     )
 
     logging.info("Writing results to %s", results_folder)
