@@ -1,7 +1,7 @@
 [project]
-name = "transport-flow-model"
+name = "nismod-tfm"
 dynamic = ["version"]
-description = "Transport flow model"
+description = "NISMOD transport flow model"
 readme = "README.md"
 authors = [
     { name = "Raghav Pant", email = "raghav.pant@ouce.ox.ac.uk" },
