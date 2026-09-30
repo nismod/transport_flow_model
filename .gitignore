@@ -22,8 +22,10 @@ config.json
 ._*
 
 # Python
+.venv/
 __pycache__
 *.pyd
+*.pdb
 *.pyc
 *.so
 .ipynb_checkpoints
