@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 
@@ -25,6 +26,109 @@ from transport_flow_model.network import Network
 PATH_COLUMNS = ("origin_id", "destination_id", "flow", "edge_path", "cost")
 #: Tolerance when deciding whether a float column holds integral values.
 INTEGRAL_EPSILON = 1.0e-9
+LEGACY_MILE_TO_KM = 1.60934
+LEGACY_FUEL_PRICE_GBP_PER_LITRE = 1.4
+LEGACY_COST_EPSILON = 1.0e-6
+LEGACY_CAPACITY_EPSILON = 1.0e-9
+LEGACY_SATURATED_EDGE_PENALTY = 1.0e18
+
+LEGACY_VALUE_OF_TIME = {
+    "car": 21.41,
+    "lgv": 16.87,
+    "ogv": 20.35,
+    "psv": 13.15,
+    "rail": 38.28,
+}
+LEGACY_FUEL_LITRE_PER_KM = {
+    "car": (0.46693, 0.08257, -0.00088, 0.000006),
+    "lgv": (0.40392, 0.15318, -0.00467, 0.000033),
+    "ogv": (4.18094, 0.21864, -0.00298, 0.000023),
+    "psv": (3.36019, 0.29525, -0.00321, 0.000024),
+}
+LEGACY_NON_FUEL_PENCE_PER_KM = {
+    "car": (6.885, 188.486),
+    "lgv": (10.001, 65.321),
+    "ogv": (13.709, 535.418),
+    "psv": (42.233, 962.974),
+}
+LEGACY_SPEED_REDUCTION = {
+    "M": 0.033,
+    "A_dual": 0.033,
+    "A_single": 0.05,
+    "B": 0.05,
+    "B_dual": 0.05,
+    "B_single": 0.05,
+}
+
+
+def _legacy_congestion_costs(
+    links: pa.Table, flows: np.ndarray, vehicle_type: str
+) -> np.ndarray:
+    """Calculate legacy speed, time, operating, and toll costs per link."""
+    if vehicle_type not in LEGACY_VALUE_OF_TIME:
+        supported = ", ".join(LEGACY_VALUE_OF_TIME)
+        raise ValueError(f"vehicle_type must be one of: {supported}")
+
+    required_columns = {
+        "length_mile",
+        "initial_flow_speeds",
+        "min_flow_speeds",
+        "breakpoint_flows",
+        "combined_label",
+    }
+    missing = sorted(required_columns - set(links.column_names))
+    if missing:
+        raise ValueError(
+            "Legacy congestion assignment requires link columns: "
+            f"{', '.join(missing)}"
+        )
+
+    def float_column(name: str) -> np.ndarray:
+        return pc.cast(links[name], pa.float64()).to_numpy(zero_copy_only=False)
+
+    labels = links["combined_label"].to_pylist()
+    reduction_factors = np.fromiter(
+        (LEGACY_SPEED_REDUCTION.get(label, 0.0) for label in labels),
+        dtype="float64",
+        count=links.num_rows,
+    )
+    initial_speeds = float_column("initial_flow_speeds")
+    minimum_speeds = float_column("min_flow_speeds")
+    breakpoints = float_column("breakpoint_flows")
+    flow_per_hour = np.asarray(flows, dtype="float64") / 24.0
+    excess_flow = np.maximum(flow_per_hour - breakpoints, 0.0)
+    speeds = np.maximum(
+        initial_speeds - reduction_factors * excess_flow, minimum_speeds
+    )
+
+    distance_miles = float_column("length_mile")
+    distance_km = distance_miles * LEGACY_MILE_TO_KM
+    time_hours = distance_miles / np.maximum(speeds, LEGACY_COST_EPSILON)
+    speed_kmph = distance_km / np.maximum(time_hours, LEGACY_COST_EPSILON)
+
+    occupancy = 1.06 if vehicle_type == "car" else 1.0
+    time_cost = time_hours * LEGACY_VALUE_OF_TIME[vehicle_type] * occupancy
+    operating_cost = np.zeros(links.num_rows, dtype="float64")
+    if vehicle_type in ("car", "lgv", "ogv"):
+        a, b, c, d = LEGACY_FUEL_LITRE_PER_KM[vehicle_type]
+        fuel_litres_per_km = (
+            a / np.maximum(speed_kmph, LEGACY_COST_EPSILON)
+            + b
+            + c * speed_kmph
+            + d * speed_kmph**2
+        )
+        fuel_cost_per_km = fuel_litres_per_km * LEGACY_FUEL_PRICE_GBP_PER_LITRE
+        non_fuel_a, non_fuel_b = LEGACY_NON_FUEL_PENCE_PER_KM[vehicle_type]
+        non_fuel_cost_per_km = (
+            non_fuel_a + non_fuel_b / np.maximum(speed_kmph, LEGACY_COST_EPSILON)
+        ) / 100.0
+        operating_cost = (fuel_cost_per_km + non_fuel_cost_per_km) * distance_km
+
+    if "average_toll_cost" in links.column_names:
+        toll_cost = float_column("average_toll_cost")
+    else:
+        toll_cost = np.zeros(links.num_rows, dtype="float64")
+    return time_cost + operating_cost + toll_cost
 
 
 @dataclass(frozen=True)
@@ -195,6 +299,288 @@ def _assign_sequential(
         "unassigned": unassigned,
         "paths": paths if include_paths else None,
         "iterations": 1,
+        "relative_gap": None,
+    }
+
+
+@register_method("congestion")
+def _assign_congestion(
+    network: Network,
+    demand: Demand,
+    *,
+    include_paths: bool = False,
+    capacity_constrained: bool = True,
+    directed: bool = True,
+    max_iterations: int = 10,
+    vehicle_type: str = "car",
+) -> dict:
+    """Iteratively load remaining demand with legacy capacity penalties.
+
+    Each round assigns all remaining OD demand without capacity constraints, then
+    scales each OD flow by the tightest remaining-capacity ratio along its path.
+    Near-saturated links are penalized before costs and routes are recalculated for
+    the residual demand. Links need the legacy speed (mph) and length fields (miles).
+
+    Citation:
+    Li, Y., Pant, R., Russell, T., Thomas, F., Hall, J. W., Oldham, P., ... & Young, P. J.
+    (2026). Stress-testing road network resilience using counterfactual flood events
+    (1953 - 2024) in Great Britain. Transportation Research Part D: Transport and Environment,
+    155, 105292.
+    """
+    if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
+        raise TypeError("max_iterations must be a positive integer")
+    if max_iterations < 1:
+        raise ValueError("max_iterations must be a positive integer")
+    if vehicle_type not in LEGACY_VALUE_OF_TIME:
+        supported = ", ".join(LEGACY_VALUE_OF_TIME)
+        raise ValueError(f"vehicle_type must be one of: {supported}")
+
+    links = network.to_table()
+    od = demand.to_table()
+    origin_ids = od["origin_id"].to_pylist()
+    destination_ids = od["destination_id"].to_pylist()
+    demand_values = pc.cast(od["value"], pa.float64()).to_numpy(zero_copy_only=False)
+
+    # Combine duplicate OD rows so each pair has one remaining-demand balance.
+    total_by_pair: dict[tuple[Any, Any], float] = {}
+    for origin, destination, value in zip(origin_ids, destination_ids, demand_values):
+        pair = (origin, destination)
+        total_by_pair[pair] = total_by_pair.get(pair, 0.0) + float(value)
+    remaining_by_pair = total_by_pair.copy()
+
+    # Carry any existing link loads forward and align capacities to link order.
+    if "flow" in links.column_names:
+        cumulative_flows = pc.fill_null(
+            pc.cast(links["flow"], pa.float64()), 0.0
+        ).to_numpy(zero_copy_only=False)
+    else:
+        cumulative_flows = np.zeros(links.num_rows, dtype="float64")
+
+    if capacity_constrained and "capacity" in links.column_names:
+        capacities = pc.fill_null(
+            pc.cast(links["capacity"], pa.float64()), np.inf
+        ).to_numpy(zero_copy_only=False)
+        capacities = np.where(
+            np.isfinite(capacities), np.maximum(capacities, 0.0), np.inf
+        )
+    else:
+        capacities = np.full(links.num_rows, np.inf, dtype="float64")
+    edge_positions = {
+        edge_id: index for index, edge_id in enumerate(links["edge_id"].to_pylist())
+    }
+
+    assigned_by_pair: dict[tuple[Any, Any], float] = {}
+    skim_totals: dict[tuple[Any, Any], list[float]] = {}
+    path_tables = []
+    unreachable_pairs: set[tuple[Any, Any]] = set()
+    iterations_run = 0
+
+    for _ in range(max_iterations):
+        # Route only demand that still has a feasible destination.
+        batch_pairs = [
+            pair
+            for pair, flow in remaining_by_pair.items()
+            if flow > LEGACY_CAPACITY_EPSILON and pair not in unreachable_pairs
+        ]
+        if not batch_pairs:
+            break
+
+        batch = pa.table(
+            {
+                "origin_id": pa.array(
+                    [pair[0] for pair in batch_pairs], type=od["origin_id"].type
+                ),
+                "destination_id": pa.array(
+                    [pair[1] for pair in batch_pairs],
+                    type=od["destination_id"].type,
+                ),
+                "flow": pa.array(
+                    [remaining_by_pair[pair] for pair in batch_pairs],
+                    type=pa.float64(),
+                ),
+            }
+        )
+
+        costs = _legacy_congestion_costs(links, cumulative_flows, vehicle_type)
+        remaining_capacity = np.maximum(capacities - cumulative_flows, 0.0)
+        finite_capacity = np.isfinite(capacities)
+        utilization_remaining = np.ones(links.num_rows, dtype="float64")
+        np.divide(
+            remaining_capacity,
+            capacities,
+            out=utilization_remaining,
+            where=finite_capacity & (capacities > 0.0),
+        )
+        saturated_edges = finite_capacity & (
+            (remaining_capacity < 1.0) | (utilization_remaining < 0.01)
+        )
+        # Make nearly exhausted links unattractive in the next shortest-path search.
+        costs[saturated_edges] = LEGACY_SATURATED_EDGE_PENALTY
+        if "cost" in links.column_names:
+            working_links = links.set_column(
+                links.column_names.index("cost"),
+                "cost",
+                pa.array(costs, type=pa.float64()),
+            )
+        else:
+            working_links = links.append_column(
+                "cost", pa.array(costs, type=pa.float64())
+            )
+        if "flow" in working_links.column_names:
+            working_links = working_links.set_column(
+                working_links.column_names.index("flow"),
+                "flow",
+                pa.array(cumulative_flows, type=pa.float64()),
+            )
+        else:
+            working_links = working_links.append_column(
+                "flow", pa.array(cumulative_flows, type=pa.float64())
+            )
+
+        # First find the best routes without capacity limits; scale them below.
+        allocation = core.allocate(
+            working_links,
+            batch,
+            capacity_constrained=False,
+            directed=directed,
+        )
+        iterations_run += 1
+
+        allocated = allocation["od_flows"]
+        for origin, destination in zip(
+            allocation["unassigned_od"]["origin_id"].to_pylist(),
+            allocation["unassigned_od"]["destination_id"].to_pylist(),
+        ):
+            unreachable_pairs.add((origin, destination))
+
+        proposed_by_edge = np.zeros(links.num_rows, dtype="float64")
+        # The ratio denominator is total proposed flow across all OD pairs per edge.
+        for edge_path, flow in zip(
+            allocated["edge_path"].to_pylist(), allocated["flow"].to_pylist()
+        ):
+            for edge_id in edge_path:
+                proposed_by_edge[edge_positions[edge_id]] += float(flow)
+
+        accepted_by_edge = np.zeros(links.num_rows, dtype="float64")
+        accepted_flows = []
+        accepted_rows = []
+        for row_index, (origin, destination, flow, edge_path, cost) in enumerate(
+            zip(
+                allocated["origin_id"].to_pylist(),
+                allocated["destination_id"].to_pylist(),
+                allocated["flow"].to_pylist(),
+                allocated["edge_path"].to_pylist(),
+                allocated["cost"].to_pylist(),
+            )
+        ):
+            flow = float(flow)
+            adjustment_ratio = 1.0
+            if capacity_constrained:
+                # An OD path is limited by its most constrained edge.
+                for edge_id in edge_path:
+                    edge_index = edge_positions[edge_id]
+                    proposed = proposed_by_edge[edge_index]
+                    if proposed > LEGACY_CAPACITY_EPSILON:
+                        edge_ratio = min(remaining_capacity[edge_index] / proposed, 1.0)
+                        adjustment_ratio = min(adjustment_ratio, max(edge_ratio, 0.0))
+
+            accepted_flow = flow * adjustment_ratio
+            if accepted_flow <= LEGACY_CAPACITY_EPSILON:
+                continue
+
+            pair = (origin, destination)
+            assigned_by_pair[pair] = assigned_by_pair.get(pair, 0.0) + accepted_flow
+            remaining_by_pair[pair] = max(remaining_by_pair[pair] - accepted_flow, 0.0)
+            totals = skim_totals.setdefault(pair, [0.0, 0.0])
+            totals[0] += accepted_flow
+            totals[1] += accepted_flow * float(cost)
+            accepted_flows.append(accepted_flow)
+            accepted_rows.append(row_index)
+            for edge_id in edge_path:
+                accepted_by_edge[edge_positions[edge_id]] += accepted_flow
+
+        # Keep path-level output consistent with the capacity-adjusted flow.
+        if include_paths and accepted_rows:
+            accepted_paths = allocated.take(pa.array(accepted_rows, type=pa.int64()))
+            accepted_paths = accepted_paths.set_column(
+                accepted_paths.column_names.index("flow"),
+                "flow",
+                pa.array(accepted_flows, type=pa.float64()),
+            )
+            path_tables.append(accepted_paths.select(list(PATH_COLUMNS)))
+
+        if accepted_by_edge.sum() <= LEGACY_CAPACITY_EPSILON:
+            break
+
+        # Recompute costs and routes next round using these accepted loads.
+        cumulative_flows += accepted_by_edge
+
+    # Any demand left after the iteration limit or capacity allocation is unassigned.
+    unassigned_pairs = [
+        (pair, flow)
+        for pair, flow in remaining_by_pair.items()
+        if flow > LEGACY_CAPACITY_EPSILON
+    ]
+    unassigned = pa.table(
+        {
+            "origin_id": pa.array(
+                [pair[0] for pair, _ in unassigned_pairs],
+                type=od["origin_id"].type,
+            ),
+            "destination_id": pa.array(
+                [pair[1] for pair, _ in unassigned_pairs],
+                type=od["destination_id"].type,
+            ),
+            "value": pa.array(
+                [flow for _, flow in unassigned_pairs], type=pa.float64()
+            ),
+        }
+    )
+    unassigned = coerce_integral(unassigned, columns=("value",))
+
+    skim_pairs = list(skim_totals)
+    skims = pa.table(
+        {
+            "origin_id": pa.array(
+                [pair[0] for pair in skim_pairs], type=od["origin_id"].type
+            ),
+            "destination_id": pa.array(
+                [pair[1] for pair in skim_pairs],
+                type=od["destination_id"].type,
+            ),
+            "cost": pa.array(
+                [skim_totals[pair][1] / skim_totals[pair][0] for pair in skim_pairs],
+                type=pa.float64(),
+            ),
+        }
+    )
+    skims = coerce_integral(skims, columns=("cost",))
+
+    if path_tables:
+        paths = coerce_integral(pa.concat_tables(path_tables))
+    else:
+        paths = pa.table(
+            {
+                "origin_id": pa.array([], type=od["origin_id"].type),
+                "destination_id": pa.array([], type=od["destination_id"].type),
+                "flow": pa.array([], type=pa.float64()),
+                "edge_path": pa.array([], type=pa.list_(links["edge_id"].type)),
+                "cost": pa.array([], type=pa.float64()),
+            }
+        )
+
+    final_network_flows = pa.table(
+        {
+            "edge_id": links["edge_id"],
+            "flow": pa.array(cumulative_flows, type=pa.float64()),
+        }
+    )
+    return {
+        "link_flows": link_flows_table(links, final_network_flows),
+        "skims": skims,
+        "unassigned": unassigned,
+        "paths": paths if include_paths else None,
+        "iterations": iterations_run,
         "relative_gap": None,
     }
 
