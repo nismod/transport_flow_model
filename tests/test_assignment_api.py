@@ -1,3 +1,4 @@
+# %%
 import pandas as pd
 import pytest
 
@@ -72,6 +73,183 @@ def test_skims_flow_weighted_cost(links, od):
     # B->D splits 50 units at cost 5 and 50 at cost 50: weighted mean 27.5
     assert skims.loc[("B", "D"), "cost"] == pytest.approx(27.5)
     assert skims.loc[("A", "C"), "cost"] == pytest.approx(20.0)
+
+
+def test_congestion_assignment_penalizes_saturated_route():
+    network = Network(
+        pd.DataFrame(
+            {
+                "edge_from": ["A", "A"],
+                "edge_to": ["B", "B"],
+                "edge_id": ["fast", "slow"],
+                "length_mile": [1.0, 1.0],
+                "initial_flow_speeds": [60.0, 40.0],
+                "min_flow_speeds": [10.0, 10.0],
+                "breakpoint_flows": [0.0, 0.0],
+                "combined_label": ["A_single", "A_single"],
+                "average_toll_cost": [0.0, 0.0],
+                "capacity": [8_000.0, 50_000.0],
+            }
+        )
+    )
+    demand = Demand(
+        pd.DataFrame({"origin_id": ["A"], "destination_id": ["B"], "value": [24_000.0]})
+    )
+
+    result = assign(
+        network,
+        demand,
+        "congestion",
+        include_paths=True,
+        capacity_constrained=True,
+        max_iterations=10,
+    )
+
+    flows = dict(
+        zip(
+            result.link_flows["edge_id"].to_pylist(),
+            result.link_flows["flow"].to_pylist(),
+        )
+    )
+    assert flows["fast"] == pytest.approx(8_000.0)
+    assert flows["slow"] > 0
+    assert sum(flows.values()) == pytest.approx(24_000.0)
+    assert result.unassigned.num_rows == 0
+    assert result.provenance.iterations == 2
+
+
+def test_congestion_adjustment_ratio_uses_total_edge_demand():
+    network = Network(
+        pd.DataFrame(
+            {
+                "edge_from": ["A", "B", "C"],
+                "edge_to": ["B", "C", "D"],
+                "edge_id": ["AB", "BC", "CD"],
+                "length_mile": [1.0, 1.0, 1.0],
+                "initial_flow_speeds": [60.0, 60.0, 60.0],
+                "min_flow_speeds": [10.0, 10.0, 10.0],
+                "breakpoint_flows": [1_000.0, 1_000.0, 1_000.0],
+                "combined_label": ["M", "M", "M"],
+                "average_toll_cost": [0.0, 0.0, 0.0],
+                "capacity": [1_000.0, 60.0, 1_000.0],
+            }
+        )
+    )
+    demand = Demand(
+        pd.DataFrame(
+            {
+                "origin_id": ["A", "B"],
+                "destination_id": ["D", "D"],
+                "value": [80.0, 40.0],
+            }
+        )
+    )
+
+    result = assign(
+        network,
+        demand,
+        "congestion",
+        include_paths=True,
+        max_iterations=5,
+    )
+
+    paths = result.paths.to_pandas().set_index("origin_id")
+    link_flows = dict(
+        zip(
+            result.link_flows["edge_id"].to_pylist(),
+            result.link_flows["flow"].to_pylist(),
+        )
+    )
+    unassigned = dict(
+        zip(
+            result.unassigned["origin_id"].to_pylist(),
+            result.unassigned["value"].to_pylist(),
+        )
+    )
+
+    assert paths.loc["A", "flow"] == pytest.approx(40.0)
+    assert paths.loc["B", "flow"] == pytest.approx(20.0)
+    assert link_flows["BC"] == pytest.approx(60.0)
+    assert unassigned == {"A": 40.0, "B": 20.0}
+
+
+def test_congestion_assignment_uses_vehicle_specific_costs():
+    network = Network(
+        pd.DataFrame(
+            {
+                "edge_from": ["A"],
+                "edge_to": ["B"],
+                "edge_id": ["AB"],
+                "length_mile": [1.0],
+                "initial_flow_speeds": [60.0],
+                "min_flow_speeds": [10.0],
+                "breakpoint_flows": [100.0],
+                "combined_label": ["M"],
+                "average_toll_cost": [0.0],
+            }
+        )
+    )
+    demand = Demand(
+        pd.DataFrame({"origin_id": ["A"], "destination_id": ["B"], "value": [1.0]})
+    )
+
+    car = assign(
+        network,
+        demand,
+        "congestion",
+        include_paths=True,
+        capacity_constrained=False,
+        max_iterations=1,
+        vehicle_type="car",
+    )
+    lgv = assign(
+        network,
+        demand,
+        "congestion",
+        include_paths=True,
+        capacity_constrained=False,
+        max_iterations=1,
+        vehicle_type="lgv",
+    )
+    psv = assign(
+        network,
+        demand,
+        "congestion",
+        include_paths=True,
+        capacity_constrained=False,
+        max_iterations=1,
+        vehicle_type="psv",
+    )
+
+    assert car.skims["cost"][0].as_py() != pytest.approx(lgv.skims["cost"][0].as_py())
+    assert psv.skims["cost"][0].as_py() == pytest.approx(13.15 / 60.0)
+
+
+def test_congestion_assignment_respects_link_capacity():
+    network = Network(
+        pd.DataFrame(
+            {
+                "edge_from": ["A"],
+                "edge_to": ["B"],
+                "edge_id": ["AB"],
+                "length_mile": [1.0],
+                "initial_flow_speeds": [60.0],
+                "min_flow_speeds": [10.0],
+                "breakpoint_flows": [100.0],
+                "combined_label": ["A_single"],
+                "average_toll_cost": [0.0],
+                "capacity": [3.0],
+            }
+        )
+    )
+    demand = Demand(
+        pd.DataFrame({"origin_id": ["A"], "destination_id": ["B"], "value": [5.0]})
+    )
+
+    result = assign(network, demand, "congestion", max_iterations=5)
+
+    assert result.link_flows["flow"].to_pylist() == [3]
+    assert result.unassigned["value"].to_pylist() == [2]
 
 
 def test_paths_omitted_by_default(links, od):
