@@ -310,8 +310,8 @@ def _assign_congestion(
     *,
     include_paths: bool = False,
     capacity_constrained: bool = True,
-    directed: bool = True,
-    max_iterations: int = 10,
+    directed: bool = False,
+    max_iterations: int = 5,
     vehicle_type: str = "car",
 ) -> dict:
     """Iteratively load remaining demand with legacy capacity penalties.
