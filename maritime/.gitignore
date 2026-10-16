@@ -1,0 +1,34 @@
+# Downloaded source datasets and intermediate data
+/gitignore_data/
+/raw_data/**
+!/raw_data/**/
+!/raw_data/**/.gitkeep
+/raw_data/**/intermediate_data/
+
+# Generated model inputs and results
+/processed_data/**
+!/processed_data/**/
+!/processed_data/**/.gitkeep
+/results/*
+!/results/.gitkeep
+/figures/
+/Output/
+/Output_Data/
+
+# Notebook and editor temporary files
+.venv/
+.ipynb_checkpoints/
+.virtual_documents/
+__pycache__/
+*.py[cod]
+.DS_Store
+._*
+~$*.docx
+
+# Local notes and earlier workflow versions
+/CCG_NISMOD.docx
+/Chokepoint_Buffer_Inspection.ipynb
+/Maritime_Costs_with_Canal_Fees.ipynb
+/formatting.ipynb
+/inferring_port_to_port_trade_flows.py
+/inferring_port_to_port_trade_flows_with_Canal_Fees.ipynb

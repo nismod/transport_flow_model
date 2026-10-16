@@ -1,0 +1,31 @@
+# Dependencies for the current maritime preprocessing and inspection notebooks.
+# Install from maritime/: python -m pip install -r requirements.txt
+# Install the transport-flow-model package separately from the parent project.
+# This is an import-based dependency list, not a tested/pinned environment lock.
+
+# Notebook interface and kernel
+jupyterlab
+ipykernel
+ipython
+
+# Tables, numerical analysis, and Parquet I/O
+numpy
+pandas
+pyarrow
+duckdb
+scipy
+dask[dataframe]
+scikit-learn
+
+# Geospatial data and network processing
+geopandas
+pyogrio
+pyproj
+shapely
+networkx
+
+# Plotting and progress reporting
+matplotlib
+seaborn
+cartopy
+tqdm
