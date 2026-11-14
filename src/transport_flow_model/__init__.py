@@ -14,7 +14,7 @@ from .disruption import (
 )
 from .model import compute_losses
 from .network import Network
-from .radiation import RadiationModel
+from .radiation import RadiationModel, radiation_flows, radiation_probabilities
 
 try:
     from ._version import __version__
@@ -40,5 +40,7 @@ __all__ = [
     "io",
     "link_costs",
     "load_config",
+    "radiation_flows",
+    "radiation_probabilities",
     "relative_gap",
 ]

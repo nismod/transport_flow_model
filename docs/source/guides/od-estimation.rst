@@ -39,8 +39,14 @@ Where:
 
 - :math:`P_{ij}` = probability of flow from location :math:`i` to location :math:`j`
 - :math:`m_i`, :math:`m_j` = relevance (population, employment) at origin/destination
-- :math:`s_{ij}` = total relevance of intervening opportunities between :math:`i` and :math:`j`
+- :math:`s_{ij}` = intervening opportunities: the total destination relevance
+  of every other location :math:`k` at least as close to :math:`i` as :math:`j` is
+  (:math:`d_{ik} \le d_{ij}`, excluding :math:`i` and :math:`j`)
 - :math:`M` = total relevance across all locations
+
+Origin and destination relevance can differ (see
+`Separate Origin and Destination Masses`_ below); :math:`m_j` and :math:`s_{ij}`
+then use the destination relevance.
 
 Basic Usage
 -----------
@@ -119,14 +125,13 @@ The model will raise an error if a node is missing.
 Distance Threshold
 ------------------
 
-The ``distance_threshold`` parameter controls which zones are considered "intervening
-opportunities" when calculating probabilities. Only zones within this distance from
-the origin contribute to :math:`s_{ij}`.
+The ``distance_threshold`` parameter is the maximum network distance from
+origin to destination. Destinations further away get zero probability.
+Intervening opportunities do not depend on the threshold: they are the zones
+closer to the origin than the destination.
 
-This affects the shape of the OD probability distribution:
-
-- **Small threshold**: More local flows, fewer long-distance trips
-- **Large threshold**: More dispersed flows, includes longer-distance opportunities
+- **Small threshold**: only local destinations
+- **Large threshold**: longer trips are possible as well
 
 >>> # Small threshold: focus on nearby zones
 >>> probs_short = rad.generate(
@@ -280,6 +285,79 @@ to assign flows to actual paths:
 >>> result = assign(network, demand, "sequential", directed=True)  # doctest: +SKIP
 >>> result.link_flows.to_pandas()[["edge_id", "flow"]]  # doctest: +SKIP
 
+Separate Origin and Destination Masses
+--------------------------------------
+
+For journeys to work, trips are produced by workers at home and attracted by
+jobs. Give the destination mass with ``destination_relevance_column``: it is
+used for :math:`m_j` and for the intervening opportunities :math:`s_{ij}`.
+Because :math:`m_i` and :math:`s_{ij}` are added together, the two masses
+should be in comparable units (e.g. scale jobs to the same total as workers).
+
+>>> commute_zones = pd.DataFrame(
+...     {
+...         "zone_id": [1, 2, 3],
+...         "workers": [1000, 200, 0],
+...         "jobs": [100, 300, 800],
+...     }
+... )
+>>> commute_probs = rad.generate(
+...     zones=commute_zones,
+...     zone_id_column="zone_id",
+...     zone_to_node_mapping=mapping,
+...     relevance_column="workers",
+...     destination_relevance_column="jobs",
+...     distance_threshold=10.0,
+...     normalisation="row",
+... )
+>>> commute_probs.groupby("origin")["probability"].sum().round(6).to_dict()
+{1: 1.0, 2: 1.0}
+
+Zone 3 has no workers, so it produces no trips. ``normalisation="row"``
+rescales each origin's probabilities to sum to one over the destinations it can
+reach. The default, ``"finite"``, applies Simini's finite-size correction
+:math:`1 / (1 - m_i / M)` instead.
+
+Flows
+-----
+
+``RadiationModel.flows`` multiplies the probabilities by trip production and
+returns a table ready for ``Demand``. Its ``origin_id`` and ``destination_id``
+columns hold zone ids, and the matching network nodes are in
+``origin_node_id`` and ``destination_node_id``. Flows below ``min_flow`` are
+dropped, and their total is spread back over each origin's other destinations.
+
+>>> commute = rad.flows(
+...     commute_zones,
+...     "zone_id",
+...     mapping,
+...     production_column="workers",
+...     destination_mass_column="jobs",
+...     max_impedance=10.0,
+... )
+>>> commute.groupby("origin_id")["value"].sum().round(6).to_dict()
+{1: 1000.0, 2: 200.0}
+>>> demand = Demand(
+...     commute[["origin_node_id", "destination_node_id", "value"]].rename(
+...         columns={"origin_node_id": "origin_id", "destination_node_id": "destination_id"}
+...     )
+... )
+
+Precomputed Impedance
+---------------------
+
+``radiation_probabilities`` and ``radiation_flows`` work on any dense
+zone-by-zone impedance matrix, such as travel time or generalised cost. Use
+``RadiationModel.impedance_matrix`` to compute one from a network with
+Dijkstra. Set ``directed=True`` to respect link direction.
+
+>>> import numpy as np
+>>> from transport_flow_model.radiation import radiation_flows
+>>> impedance = rad.impedance_matrix(["A", "B", "C"])
+>>> flows = radiation_flows(impedance, [1000, 200, 0], destination_mass=[100, 300, 800])
+>>> flows.sum(axis=1).round(6).tolist()
+[1000.0, 200.0, 0.0]
+
 Advanced: Custom Column Names
 ------------------------------
 
@@ -361,23 +439,21 @@ Error: Nodes in mapping not found in network: {'MISSING'}
 Performance Considerations
 --------------------------
 
-The ``RadiationModel`` computes shortest paths from each origin zone to all
-other zones. For a network with :math:`N` nodes and :math:`Z` zones:
+There are two steps:
 
-- Time complexity: :math:`O(Z \times N \log N)` (Dijkstra per zone)
-- Space complexity: :math:`O(N)` for storing distance arrays
+- **Impedance**: Dijkstra from each distinct zone node (igraph, in batches of
+  ``chunk_size`` sources), :math:`O(Z \times N \log N)`.
+- **Radiation**: one sort per origin over the dense matrix,
+  :math:`O(Z^2 \log Z)` time and :math:`O(Z^2)` memory.
 
-**Typical performance:**
+**Indicative timings:**
 
-- 10 zones, 100 nodes: < 0.1 seconds
-- 50 zones, 500 nodes: < 1 second
-- 100 zones, 1000 nodes: ~5 seconds
+- 2,500 zones, radiation step only: about 1 second
+- 2,500 zones on a 90,000-node, 180,000-link network, impedance: about
+  40 seconds
 
-For larger networks, consider:
-
-- Reducing the number of zones to represent major population centers
-- Using a simplified network topology for OD estimation
-- Parallelizing zone calculations if needed
+The dense matrices need :math:`8 Z^2` bytes each (50 MB at 2,500 zones).
+That is fine up to roughly 10,000 zones.
 
 Parameter-Free Property
 -----------------------

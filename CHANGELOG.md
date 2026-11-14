@@ -13,6 +13,25 @@ the versioning policy in the documentation).
 
 ### Added
 
+- Radiation model: separate origin and destination masses
+  (`RadiationModel.generate(..., destination_relevance_column=...)`), a
+  `normalisation` option (`"finite"`, `"row"` or `"none"`),
+  `RadiationModel.flows` for Demand-ready OD flows with `min_flow` pruning,
+  `RadiationModel.impedance_matrix` (igraph Dijkstra, optionally directed),
+  and the vectorised matrix functions `radiation_probabilities` and
+  `radiation_flows`.
+
+### Changed
+
+- Radiation model: intervening opportunities `s_ij` are now the zones at
+  least as close to the origin as the destination (Simini et al. 2012).
+  Previously they were all zones within `distance_threshold`. This changes the
+  probabilities that `RadiationModel.generate` returns.
+- Radiation model: the per-pair Python loop is replaced by vectorised
+  computation (about 1 s for 2,500 zones, excluding shortest paths).
+  The private helpers `_shortest_paths_from`, `_count_intervening_opportunities`
+  and `_calculate_probability` are removed.
+
 - Drafting v0 public API (`transport_flow_model` top level):
   - `Network`: immutable network topology and link attributes backed by a
     pyarrow table, with node factorization and CSR adjacency arrays, and

@@ -1,10 +1,15 @@
 """Tests for the radiation model."""
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from transport_flow_model.model import Network
-from transport_flow_model.radiation import RadiationModel
+from transport_flow_model.radiation import (
+    RadiationModel,
+    radiation_flows,
+    radiation_probabilities,
+)
 
 
 @pytest.fixture
@@ -336,3 +341,139 @@ def test_custom_column_names(simple_network):
 
     assert isinstance(result, pd.DataFrame)
     assert set(result.columns) == {"origin", "destination", "probability"}
+
+
+# --- Intervening opportunities, separate masses, flows, performance ---------
+
+
+def _line(positions):
+    positions = np.asarray(positions, dtype=float)
+    return np.abs(positions[:, None] - positions[None, :])
+
+
+def test_intervening_opportunities_are_zones_closer_than_destination():
+    p = radiation_probabilities(_line([0, 1, 2, 3]), np.ones(4), normalisation="none")
+    # From zone 0: s_01 = 0, s_02 = 1, s_03 = 2
+    np.testing.assert_allclose(p[0, 1:], [1 / 2, 1 / 6, 1 / 12])
+    assert p[0, 0] == 0
+
+
+def test_equidistant_zones_intervene_for_each_other():
+    d = np.array([[0, 1, 1], [1, 0, 2], [1, 2, 0]], dtype=float)
+    p = radiation_probabilities(d, np.ones(3), normalisation="none")
+    np.testing.assert_allclose(p[0, 1:], [1 / 6, 1 / 6])
+
+
+def test_intervening_opportunities_use_destination_mass():
+    d = _line([0, 1, 2])
+    origin = np.array([1.0, 1.0, 1.0])
+    jobs = np.array([0.0, 4.0, 1.0])
+    p = radiation_probabilities(d, origin, jobs, normalisation="none")
+    # From zone 0: s_02 = jobs at zone 1 = 4
+    np.testing.assert_allclose(p[0, 2], (1 * 1) / ((1 + 4) * (1 + 1 + 4)))
+
+
+def test_row_normalisation_distributes_all_production():
+    d = _line([0, 1, 2, 10])
+    t = radiation_flows(
+        d, [100, 50, 10, 5], destination_mass=[1, 5, 5, 1], max_impedance=5
+    )
+    np.testing.assert_allclose(t.sum(axis=1), [100, 50, 10, 0])
+    assert t[0, 3] == 0
+
+
+def test_min_flow_keeps_origin_totals():
+    d = _line(np.arange(10))
+    t = radiation_flows(d, np.full(10, 100.0), min_flow=5.0)
+    np.testing.assert_allclose(t.sum(axis=1), 100.0)
+    assert ((t == 0) | (t >= 5.0)).all()
+
+
+def test_unreachable_pairs_have_zero_probability():
+    d = np.array([[0, np.inf], [np.inf, 0]])
+    assert radiation_probabilities(d, np.ones(2)).sum() == 0
+
+
+def test_invalid_inputs():
+    with pytest.raises(ValueError):
+        radiation_probabilities(np.zeros((2, 2)), np.ones(2), normalisation="bad")
+    with pytest.raises(ValueError):
+        radiation_probabilities(np.zeros((2, 3)), np.ones(2))
+    with pytest.raises(ValueError):
+        radiation_probabilities(np.zeros((2, 2)), np.array([1.0, -1.0]))
+
+
+def test_generate_with_destination_relevance(simple_network):
+    zones = pd.DataFrame(
+        {"zone_id": [1, 2, 3], "workers": [100, 0, 0], "jobs": [0, 10, 10]}
+    )
+    mapping = pd.DataFrame({"zone_id": [1, 2, 3], "node_id": ["A", "B", "C"]})
+    result = RadiationModel(simple_network).generate(
+        zones,
+        "zone_id",
+        mapping,
+        "workers",
+        10.0,
+        destination_relevance_column="jobs",
+        normalisation="row",
+    )
+    from_one = result[result.origin == 1].set_index("destination")["probability"]
+    assert from_one.sum() == pytest.approx(1.0)
+    # B is closer than C, so it is preferred
+    assert from_one[2] > from_one[3]
+    # Zones with no origin mass produce no trips
+    assert set(result.origin) == {1}
+
+
+def test_flows_returns_demand_ready_table(simple_network):
+    zones = pd.DataFrame(
+        {"zone_id": [1, 2, 3, 4], "workers": [100, 50, 0, 0], "jobs": [10, 0, 40, 20]}
+    )
+    mapping = pd.DataFrame({"zone_id": [1, 2, 3, 4], "node_id": ["A", "B", "C", "E"]})
+    flows = RadiationModel(simple_network).flows(
+        zones, "zone_id", mapping, "workers", "jobs", 10.0
+    )
+    assert set(flows.columns) == {
+        "origin_id",
+        "destination_id",
+        "value",
+        "origin_node_id",
+        "destination_node_id",
+    }
+    totals = flows.groupby("origin_id")["value"].sum()
+    assert totals[1] == pytest.approx(100)
+    assert totals[2] == pytest.approx(50)
+
+
+def test_directed_impedance():
+    network = Network(
+        pd.DataFrame(
+            {
+                "edge_from": ["A", "B"],
+                "edge_to": ["B", "C"],
+                "edge_id": ["AB", "BC"],
+                "cost": [1.0, 2.0],
+            }
+        )
+    )
+    rad = RadiationModel(network)
+    undirected = rad.impedance_matrix(["A", "C"])
+    directed = rad.impedance_matrix(["A", "C"], directed=True)
+    assert undirected[1, 0] == 3.0
+    assert directed[0, 1] == 3.0
+    assert np.isinf(directed[1, 0])
+
+
+def test_performance_thousands_of_zones():
+    """2,500 zones (about Mauritius at H3 resolution 8) in a few seconds."""
+    import time
+
+    rng = np.random.default_rng(0)
+    xy = rng.uniform(0, 50, size=(2500, 2))
+    d = np.hypot(*(xy[:, None, :] - xy[None, :, :]).transpose(2, 0, 1))
+    start = time.perf_counter()
+    t = radiation_flows(
+        d, rng.uniform(0, 500, 2500), destination_mass=rng.uniform(0, 500, 2500)
+    )
+    assert time.perf_counter() - start < 30
+    assert t.shape == (2500, 2500)
