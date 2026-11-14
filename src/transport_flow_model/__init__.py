@@ -3,6 +3,12 @@
 from . import datasets, io
 from .assignment import AssignmentResult, Provenance, assign
 from .config import RunConfig, load_config
+from .constraints import (
+    aggregate_od,
+    common_part_of_commuters,
+    od_fit,
+    scale_to_aggregate,
+)
 from .convergence import link_costs, relative_gap
 from .demand import Demand
 from .disruption import (
@@ -35,14 +41,18 @@ __all__ = [
     "Scenario",
     "ScenarioResult",
     "__version__",
+    "aggregate_od",
     "assign",
+    "common_part_of_commuters",
     "compute_losses",
     "datasets",
     "disrupt",
     "io",
     "link_costs",
     "load_config",
+    "od_fit",
     "radiation_flows",
     "radiation_probabilities",
     "relative_gap",
+    "scale_to_aggregate",
 ]

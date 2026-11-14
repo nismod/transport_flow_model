@@ -72,3 +72,9 @@ should use the API above; see :doc:`versioning`.
 .. automodule:: transport_flow_model.model
    :members: Network, OD, ODFlows, NetworkFlows, compute_losses
    :no-index:
+
+OD constraints and validation
+-----------------------------
+
+.. automodule:: transport_flow_model.constraints
+   :members:

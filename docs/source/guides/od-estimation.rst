@@ -358,6 +358,37 @@ Dijkstra. Set ``directed=True`` to respect link direction.
 >>> flows.sum(axis=1).round(6).tolist()
 [1000.0, 200.0, 0.0]
 
+Constraining to Observed Aggregate Flows
+----------------------------------------
+
+Observed commuting flows are often available only between larger areas, such
+as a census travel-to-work table between districts. ``aggregate_od`` sums a
+zone OD matrix to those areas for validation. ``scale_to_aggregate`` scales
+it to match the observed totals, keeping the radiation model's pattern within
+each pair of areas.
+
+>>> from transport_flow_model import aggregate_od, od_fit, scale_to_aggregate
+>>> districts = ["north", "north", "south"]
+>>> observed = np.array([[600.0, 400.0], [100.0, 0.0]])
+>>> modelled, labels = aggregate_od(flows, districts)
+>>> metrics, table = od_fit(modelled, observed, labels)
+>>> sorted(metrics)[:3]
+['cpc', 'modelled_internal_share', 'modelled_total']
+>>> constrained = scale_to_aggregate(flows, districts, observed, method="ipf")
+>>> np.round(constrained.sum(axis=1), 6).tolist()  # zone production kept
+[1000.0, 200.0, 0.0]
+
+With ``method="ipf"``, the observed totals are first rescaled within each
+origin area to match the modelled production there. This allows, for
+example, a census from a different year. The matrix then alternates between
+matching the area-pair totals and the zone production. ``method="block"``
+matches the area-pair totals exactly, but changes zone production. Area
+pairs with observed flow but no modelled flow cannot be matched, because
+scaling cannot create flow.
+
+``common_part_of_commuters`` (CPC) is a common measure of fit between two OD
+matrices: 1 means identical, and 0 means no overlap.
+
 Advanced: Custom Column Names
 ------------------------------
 

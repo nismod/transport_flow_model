@@ -13,6 +13,11 @@ the versioning policy in the documentation).
 
 ### Added
 
+- OD constraints and validation (`transport_flow_model.constraints`):
+  `aggregate_od` (zone OD to group totals), `scale_to_aggregate` (match
+  group-to-group targets with `"block"` scaling or `"ipf"` that also keeps zone
+  production), `common_part_of_commuters` and `od_fit` (fit metrics and a
+  comparison table).
 - Radiation model: separate origin and destination masses
   (`RadiationModel.generate(..., destination_relevance_column=...)`), a
   `normalisation` option (`"finite"`, `"row"` or `"none"`),
