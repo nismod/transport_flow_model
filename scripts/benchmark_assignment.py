@@ -231,7 +231,7 @@ def run_case(case: dict) -> dict:
         datasets,
         relative_gap,
     )
-    from transport_flow_model._version import __version__
+    from transport_flow_model import __version__
 
     instance = datasets.load_tntp(case["instance"])
     network = Network.from_tntp(instance)

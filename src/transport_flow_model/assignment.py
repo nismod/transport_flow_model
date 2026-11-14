@@ -710,8 +710,6 @@ def _provenance(
 
 
 def _package_version() -> str:
-    try:
-        from transport_flow_model._version import __version__
-    except ImportError:
-        return "unknown"
+    from transport_flow_model import __version__
+
     return __version__

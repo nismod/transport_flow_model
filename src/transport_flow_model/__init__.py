@@ -17,8 +17,10 @@ from .network import Network
 from .radiation import RadiationModel, radiation_flows, radiation_probabilities
 
 try:
-    from ._version import __version__
-except ImportError:  # pragma: no cover - package not built/installed
+    from importlib.metadata import PackageNotFoundError, version
+
+    __version__ = version("nismod-tfm")
+except PackageNotFoundError:  # pragma: no cover - package not installed
     __version__ = "unknown"
 
 __all__ = [

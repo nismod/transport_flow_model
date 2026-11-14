@@ -25,17 +25,10 @@ dev = [
 doc = ["sphinx", "pydata-sphinx-theme"]
 
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
-build-backend = "hatchling.build"
-
-[tool.hatch.version]
-source = "vcs"
-
-[tool.hatch.build.hooks.vcs]
-version-file = "src/transport_flow_model/_version.py"
-
-[tool.hatch.build.targets.sdist]
-include = ["/src"]
+# maturin builds the Rust extension (transport_flow_model._core) and packages
+# the Python sources under src/. The package version comes from Cargo.toml.
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
 
 [tool.maturin]
 module-name = "transport_flow_model._core"
