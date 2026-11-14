@@ -23,6 +23,11 @@ the versioning policy in the documentation).
 
 ### Changed
 
+- Packaging: the build backend is now maturin, so wheels and source installs
+  (including `pip install git+...`) contain the Python package and the compiled
+  `_core` extension. Previously the hatchling build shipped only `_version.py`.
+  The version now comes from `Cargo.toml` (`0.2.0-rc.2`), and
+  `transport_flow_model.__version__` reads the installed package metadata.
 - Radiation model: intervening opportunities `s_ij` are now the zones at
   least as close to the origin as the destination (Simini et al. 2012).
   Previously they were all zones within `distance_threshold`. This changes the

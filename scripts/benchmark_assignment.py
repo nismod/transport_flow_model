@@ -226,12 +226,12 @@ def run_case(case: dict) -> dict:
     from transport_flow_model import (
         Demand,
         Network,
+        __version__,
         assign,
         core,
         datasets,
         relative_gap,
     )
-    from transport_flow_model import __version__
 
     instance = datasets.load_tntp(case["instance"])
     network = Network.from_tntp(instance)
