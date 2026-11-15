@@ -34,6 +34,27 @@ build-backend = "maturin"
 module-name = "transport_flow_model._core"
 python-source = "src"
 manifest-path = "Cargo.toml"
+# The sdist holds what is needed to build: Cargo.toml, Cargo.lock, core/
+# (Rust sources), src/ (Python sources and package data), pyproject.toml,
+# README.md, LICENSE and CHANGELOG.md. Everything else that cargo would
+# package from the repository root (examples, scripts, tests, docs, CI and
+# local build or benchmark output) is left out.
+exclude = [
+    { path = ".github/**/*", format = "sdist" },
+    { path = ".gitattributes", format = "sdist" },
+    { path = ".gitignore", format = "sdist" },
+    { path = "benchmark_data/**/*", format = "sdist" },
+    { path = "benchmark_results/**/*", format = "sdist" },
+    { path = "config.*.json", format = "sdist" },
+    { path = "DEVELOPMENT.md", format = "sdist" },
+    { path = "docs/**/*", format = "sdist" },
+    { path = "example/**/*", format = "sdist" },
+    { path = "pixi.lock", format = "sdist" },
+    { path = "profile_results/**/*", format = "sdist" },
+    { path = "scripts/**/*", format = "sdist" },
+    { path = "target/**/*", format = "sdist" },
+    { path = "tests/**/*", format = "sdist" },
+]
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]

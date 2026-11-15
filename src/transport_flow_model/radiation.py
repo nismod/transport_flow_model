@@ -69,7 +69,8 @@ def radiation_probabilities(
         destination mass (Simini's finite-size correction). ``"row"`` rescales
         each origin's probabilities to sum to 1 over its reachable
         destinations, so all production is distributed. ``"none"`` applies
-        the formula as is.
+        the formula as is. ``"finite"`` assumes a zone is not its own
+        destination, so it cannot be combined with ``include_self=True``.
     include_self : bool
         Allow the origin zone as a destination (trips that stay within a
         zone), at the impedance on the diagonal of ``impedance``, which must
@@ -77,7 +78,9 @@ def radiation_probabilities(
         destination mass is never counted as an intervening opportunity, so
         with no zone closer than the intrazonal impedance,
         ``P_ii = n_i / (m_i + n_i)``. By default (``False``) the diagonal is
-        ignored, as in the original model.
+        ignored, as in the original model. Requires ``normalisation="row"``
+        or ``"none"``: the ``"finite"`` correction is derived for a model
+        without trips within a zone, and raises :class:`ValueError` here.
 
     Returns
     -------
@@ -98,6 +101,12 @@ def radiation_probabilities(
     if normalisation not in NORMALISATIONS:
         raise ValueError(
             f"normalisation must be one of {NORMALISATIONS}, got {normalisation!r}"
+        )
+    if include_self and normalisation == "finite":
+        raise ValueError(
+            'normalisation="finite" cannot be used with include_self=True: the '
+            "finite-size correction 1 / (1 - m_i / M) assumes a zone is not its "
+            'own destination; use normalisation="row" or "none"'
         )
     d = np.array(impedance, dtype=float)
     m = np.asarray(origin_mass, dtype=float)

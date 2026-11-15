@@ -396,17 +396,43 @@ pub fn disrupt(
     capacity_constrained: bool,
     directed: bool,
 ) -> DisruptionOutput {
+    disrupt_with_reroute_edges(
+        edges,
+        existing_flows,
+        failed_edges,
+        &[],
+        capacity_constrained,
+        directed,
+    )
+}
+
+/// Like [`disrupt`], but flows whose path uses any of `reroute_edges` are
+/// also released and reallocated. Unlike failed edges, reroute edges stay
+/// available to the reallocation (e.g. links whose cost changed).
+pub fn disrupt_with_reroute_edges(
+    edges: &[Edge],
+    existing_flows: &[OdFlow],
+    failed_edges: &[usize],
+    reroute_edges: &[usize],
+    capacity_constrained: bool,
+    directed: bool,
+) -> DisruptionOutput {
     let max_known_edge_id = max_edge_id(edges, existing_flows);
     let edge_flow_capacity = max_known_edge_id.map_or(0, |edge_id| edge_id + 1);
     let current_edge_flows = flow_by_edge(existing_flows, edge_flow_capacity);
-    let failed_edge_flags = edge_flags(failed_edges, max_known_edge_id);
+    let affected_edges = failed_edges
+        .iter()
+        .chain(reroute_edges)
+        .copied()
+        .collect::<Vec<_>>();
+    let affected_edge_flags = edge_flags(&affected_edges, max_known_edge_id);
     let mut initial_costs_by_od: BTreeMap<(usize, usize), f64> = BTreeMap::new();
     let mut affected_flows = Vec::new();
     for flow in existing_flows {
         let is_affected = flow
             .edge_path
             .iter()
-            .any(|edge_id| failed_edge_flags.get(*edge_id).copied().unwrap_or(false));
+            .any(|edge_id| affected_edge_flags.get(*edge_id).copied().unwrap_or(false));
         if is_affected {
             *initial_costs_by_od
                 .entry((flow.origin, flow.destination))
@@ -1045,6 +1071,47 @@ mod tests {
         assert_eq!(result.rerouted_flows[0].cost, 5.0);
         assert!(result.isolated_od.is_empty());
         assert_eq!(result.losses[0].rerouting_loss, 3.0);
+    }
+
+    #[test]
+    fn reroute_edges_release_flows_but_stay_available() {
+        // The path 0 -> 1 -> 2 became expensive on edge 1 (cost 10); the
+        // direct edge 2 (cost 5) is now cheaper.
+        let edges = vec![
+            edge(0, 1, 0, 1.0, Some(100.0)),
+            edge(1, 2, 1, 10.0, Some(100.0)),
+            edge(0, 2, 2, 5.0, Some(100.0)),
+        ];
+        let existing = vec![OdFlow {
+            origin: 0,
+            destination: 2,
+            flow: 10.0,
+            edge_path: vec![0, 1],
+            cost: 2.0,
+        }];
+
+        let result = disrupt_with_reroute_edges(&edges, &existing, &[], &[1], true, true);
+        assert_eq!(result.rerouted_flows[0].edge_path, vec![2]);
+        assert_eq!(result.losses[0].initial_cost, 2.0);
+        assert_eq!(result.losses[0].rerouting_loss, 3.0);
+
+        // A reroute edge is not removed: it is still used when cheapest.
+        let edges = vec![
+            edge(0, 1, 0, 1.0, Some(100.0)),
+            edge(1, 2, 1, 3.0, Some(100.0)),
+            edge(0, 2, 2, 5.0, Some(100.0)),
+        ];
+        let result = disrupt_with_reroute_edges(&edges, &existing, &[], &[1], true, true);
+        assert_eq!(result.rerouted_flows[0].edge_path, vec![0, 1]);
+        assert_eq!(result.rerouted_flows[0].cost, 4.0);
+        assert_eq!(result.network_flows[1].flow, 10.0);
+        assert_eq!(result.network_flows[2].flow, 0.0);
+
+        // No reroute edges: identical to `disrupt`.
+        assert_eq!(
+            disrupt_with_reroute_edges(&edges, &existing, &[0], &[], true, true),
+            disrupt(&edges, &existing, &[0], true, true)
+        );
     }
 
     #[test]

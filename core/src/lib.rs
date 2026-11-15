@@ -38,6 +38,7 @@ fn allocate_ffi<'py>(
 }
 
 #[pyfunction]
+#[pyo3(signature = (network, od_flows, failed_edges, capacity_constrained, directed, reroute_edges=None))]
 fn disrupt_ffi<'py>(
     py: Python<'py>,
     network: &Bound<'py, PyAny>,
@@ -45,10 +46,12 @@ fn disrupt_ffi<'py>(
     failed_edges: &Bound<'py, PyAny>,
     capacity_constrained: bool,
     directed: bool,
+    reroute_edges: Option<&Bound<'py, PyAny>>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let mut network = arrow_ffi::prepare_network_ffi(network).map_err(PyValueError::new_err)?;
-    let od_flows = arrow_ffi::prepare_od_flows_ffi(od_flows, failed_edges, &mut network)
-        .map_err(PyValueError::new_err)?;
+    let od_flows =
+        arrow_ffi::prepare_od_flows_ffi(od_flows, failed_edges, reroute_edges, &mut network)
+            .map_err(PyValueError::new_err)?;
     let output = core::disrupt_with_preprocessed(
         &network.edges,
         &od_flows.inputs.affected_flows,

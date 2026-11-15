@@ -501,3 +501,18 @@ def test_include_self_keeps_production_with_row_normalisation():
     )
     np.testing.assert_allclose(t.sum(axis=1), [100, 50, 10, 0])
     assert (np.diag(t)[:3] > 0).all()
+
+
+def test_include_self_rejects_finite_normalisation():
+    d = _line([0, 1, 2])
+    np.fill_diagonal(d, 0.5)
+    with pytest.raises(ValueError, match='"row" or "none"'):
+        radiation_probabilities(d, np.ones(3), include_self=True)
+    with pytest.raises(ValueError, match="include_self"):
+        radiation_flows(d, np.ones(3), include_self=True, normalisation="finite")
+    # "finite" without include_self, and include_self with "row"/"none", work
+    radiation_probabilities(d, np.ones(3), normalisation="finite")
+    for normalisation in ("row", "none"):
+        radiation_probabilities(
+            d, np.ones(3), include_self=True, normalisation=normalisation
+        )

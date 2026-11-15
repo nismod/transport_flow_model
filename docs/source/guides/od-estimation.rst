@@ -397,7 +397,10 @@ the origin also competes as a destination, at the intrazonal impedance on the
 diagonal of the impedance matrix (for example, a mean travel time within the
 zone). The model then decides how many trips stay within the zone, rather
 than the user fixing a share. The origin's own destination mass is never
-counted as an intervening opportunity.
+counted as an intervening opportunity. ``include_self=True`` needs
+``normalisation="row"`` (the default for ``radiation_flows``) or ``"none"``:
+the ``"finite"`` correction assumes a zone is not its own destination, so
+that combination raises ``ValueError``.
 
 >>> d_self = impedance.copy()
 >>> np.fill_diagonal(d_self, 1.0)

@@ -137,3 +137,73 @@ isolated.
 [{'origin_id': 'A', 'destination_id': 'C', 'flow': 5}]
 >>> capacity_result.network_flows.to_dataframe().set_index("edge_id")["flow"].to_dict()
 {'AB': 0, 'BC': 0, 'AD': 10, 'DC': 10}
+
+Scenarios with link cost changes
+--------------------------------
+
+The scenario API (:class:`~transport_flow_model.Scenario` and
+:func:`~transport_flow_model.disrupt`) also models links that stay open but
+cost more (or less), for example buses on a diversion. ``Scenario.from_changes``
+combines removed links (``remove``), new absolute costs (``cost``) and factors
+on the baseline cost (``cost_scale``).
+
+- Flows whose baseline path uses a removed link are rerouted using the
+  scenario's changed costs.
+- Flows whose baseline path uses a link whose cost changed, but no removed
+  link, keep their path by default. They are listed in
+  ``ScenarioResult.repriced`` with their new path cost (the baseline path cost
+  plus the cost changes along it) and are included in ``losses``. Pass
+  ``reroute_changed=True`` to reroute them as well.
+- ``initial_cost`` in ``losses`` is always the baseline path cost.
+
+Here ``A -> D`` uses ``AB, BD`` and ``C -> D`` uses ``CD``. Removing ``BD``
+would send ``A -> D`` along ``AC, CD`` (cost 4), but the scenario also makes
+``CD`` cost 10, so the cheapest detour is the direct link ``AD`` (cost 5).
+``C -> D`` stays on ``CD`` at the new cost.
+
+>>> import transport_flow_model as tfm
+>>> links = pd.DataFrame(
+...     {
+...         "edge_from": ["A", "B", "A", "C", "A"],
+...         "edge_to": ["B", "D", "C", "D", "D"],
+...         "edge_id": ["AB", "BD", "AC", "CD", "AD"],
+...         "cost": [1, 1, 2, 2, 5],
+...         "capacity": [100, 100, 100, 100, 100],
+...     }
+... )
+>>> demand = tfm.Demand(
+...     pd.DataFrame(
+...         {"origin_id": ["A", "C"], "destination_id": ["D", "D"], "value": [10, 3]}
+...     )
+... )
+>>> scenario = tfm.Scenario.from_changes("diversion", remove=["BD"], cost={"CD": 10})
+>>> results = tfm.disrupt(
+...     tfm.Network(links), [scenario], demand, capacity_constrained=True
+... )
+>>> (result,) = results.results
+>>> result.rerouted.to_pylist()
+[{'origin_id': 'A', 'destination_id': 'D', 'flow': 10, 'edge_path': ['AD'], 'cost': 5}]
+>>> result.repriced.to_pylist()
+[{'origin_id': 'C', 'destination_id': 'D', 'flow': 3, 'edge_path': ['CD'], 'cost': 10}]
+>>> result.losses.select(["origin_id", "initial_cost", "disrupted_cost", "rerouting_loss"]).to_pylist()
+[{'origin_id': 'A', 'initial_cost': 2, 'disrupted_cost': 5, 'rerouting_loss': 3}, {'origin_id': 'C', 'initial_cost': 2, 'disrupted_cost': 10, 'rerouting_loss': 8}]
+>>> results.summary().to_pylist()
+[{'scenario_id': 'diversion', 'rerouted_flow': 10.0, 'isolated_flow': 0.0, 'rerouting_loss': 11.0, 'repriced_flow': 3.0}]
+
+With ``reroute_changed=True``, flows on links whose cost changed are rerouted
+too; the changed links stay available. Making ``BD`` cost 10 then moves
+``A -> D`` onto ``AC, CD``:
+
+>>> dearer = tfm.Scenario.from_changes("dearer", cost={"BD": 10})
+>>> (moved,) = tfm.disrupt(
+...     tfm.Network(links), [dearer], demand, reroute_changed=True,
+...     capacity_constrained=True,
+... ).results
+>>> moved.rerouted.select(["origin_id", "edge_path", "cost"]).to_pylist()
+[{'origin_id': 'A', 'edge_path': ['AC', 'CD'], 'cost': 4}]
+>>> moved.repriced.num_rows
+0
+
+With ``skip_unaffected=True`` (the default), a scenario is skipped when none of
+its removed or changed links carries baseline flow. Deltas on attributes other
+than ``cost`` (such as ``capacity``) raise ``NotImplementedError``.

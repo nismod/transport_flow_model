@@ -285,6 +285,9 @@ def calibrate_radiation(
         ``G x G`` observed flows, in the order of ``labels``.
     origin_masses : mapping, optional
         Named origin masses ``m_i`` to try. Defaults to ``{"production": production}``.
+    normalisation : {"row", "none", "finite"}
+        Passed to :func:`~transport_flow_model.radiation_flows`. ``"finite"``
+        cannot be combined with ``include_self=True`` (raises ``ValueError``).
     metric : str
         Column to rank by, higher is better (``"cpc_shares"``: CPC after
         scaling ``observed`` to the modelled total, i.e. the pattern only;

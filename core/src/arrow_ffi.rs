@@ -307,14 +307,23 @@ pub fn prepare_demands_ffi(
     prepare_demands_batches(&batches, network)
 }
 
+/// Decode OD flows for disruption. Flows whose path uses a failed edge or a
+/// `reroute_edges` edge are affected (released and reallocated); only failed
+/// edges are removed from the network used for rerouting.
 pub fn prepare_od_flows_ffi(
     table: &Bound<'_, PyAny>,
     failed_edges: &Bound<'_, PyAny>,
+    reroute_edges: Option<&Bound<'_, PyAny>>,
     network: &mut PreparedNetwork,
 ) -> Result<PreparedOdFlows, String> {
     let failed_edges = decode_failed_edges(failed_edges, network)?;
+    let reroute_edges = match reroute_edges {
+        Some(edges) => decode_failed_edges(edges, network)?,
+        None => Vec::new(),
+    };
     let batches = read_batches_from_pyarrow_table(table)?;
-    let inputs = prepare_disruption_inputs_batches(&batches, &failed_edges, network)?;
+    let inputs =
+        prepare_disruption_inputs_batches(&batches, &failed_edges, &reroute_edges, network)?;
     Ok(PreparedOdFlows {
         inputs,
         failed_edges,
@@ -447,10 +456,13 @@ fn prepare_demands_batches(
 fn prepare_disruption_inputs_batches(
     batches: &[RecordBatch],
     failed_edges: &[usize],
+    reroute_edges: &[usize],
     network: &mut PreparedNetwork,
 ) -> Result<DisruptionInputs, String> {
+    // Flags edges whose flows are affected: failed edges plus edges whose
+    // flows are rerouted although the edge stays available.
     let mut failed_edge_flags = vec![false; network.edge_ids.len().max(1)];
-    for edge_id in failed_edges {
+    for edge_id in failed_edges.iter().chain(reroute_edges) {
         failed_edge_flags[*edge_id] = true;
     }
 
@@ -1382,11 +1394,20 @@ mod tests {
         )
         .unwrap();
 
-        let inputs = prepare_disruption_inputs_batches(&[batch], &[1], &mut network).unwrap();
+        let inputs =
+            prepare_disruption_inputs_batches(&[batch.clone()], &[1], &[], &mut network).unwrap();
 
         assert_eq!(inputs.current_edge_flows, vec![0.0, 7.0, 7.0]);
         assert_eq!(inputs.affected_flows[0].edge_path, vec![1, 2]);
         assert_eq!(inputs.initial_costs_by_od, vec![(0, 1, 8.0)]);
+
+        // A reroute edge marks the flow as affected without a failed edge.
+        let inputs =
+            prepare_disruption_inputs_batches(&[batch.clone()], &[], &[2], &mut network).unwrap();
+        assert_eq!(inputs.affected_flows.len(), 1);
+        assert_eq!(inputs.initial_costs_by_od, vec![(0, 1, 8.0)]);
+        let inputs = prepare_disruption_inputs_batches(&[batch], &[], &[0], &mut network).unwrap();
+        assert!(inputs.affected_flows.is_empty());
     }
 
     #[test]

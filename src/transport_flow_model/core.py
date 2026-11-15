@@ -37,14 +37,23 @@ def disrupt(
     *,
     capacity_constrained: bool = True,
     directed: bool = True,
+    reroute_edges: list[object] | None = None,
 ) -> dict[str, pa.Table]:
-    """Reroute failed-edge flows"""
+    """Reroute failed-edge flows.
+
+    Flows whose ``edge_path`` uses a failed edge are released and
+    reallocated on the network without the failed edges. Flows whose path
+    uses one of ``reroute_edges`` are also released and reallocated, but
+    those edges stay available (e.g. links whose cost changed). Initial
+    costs in ``losses`` are the ``cost`` column of ``od_flows``.
+    """
     result = _core.disrupt_ffi(
         _to_table(network),
         _to_table(od_flows),
         failed_edges,
         capacity_constrained,
         directed,
+        reroute_edges,
     )
     return {name: _from_ffi_stream(payload) for name, payload in result.items()}
 
