@@ -46,6 +46,7 @@ def radiation_probabilities(
     *,
     max_impedance: float = np.inf,
     normalisation: str = "finite",
+    include_self: bool = False,
 ) -> np.ndarray:
     """Dense ``Z x Z`` matrix of radiation model probabilities ``P_ij``.
 
@@ -69,6 +70,14 @@ def radiation_probabilities(
         each origin's probabilities to sum to 1 over its reachable
         destinations, so all production is distributed. ``"none"`` applies
         the formula as is.
+    include_self : bool
+        Allow the origin zone as a destination (trips that stay within a
+        zone), at the impedance on the diagonal of ``impedance``, which must
+        then be finite (e.g. a mean intrazonal travel time). The origin's own
+        destination mass is never counted as an intervening opportunity, so
+        with no zone closer than the intrazonal impedance,
+        ``P_ii = n_i / (m_i + n_i)``. By default (``False``) the diagonal is
+        ignored, as in the original model.
 
     Returns
     -------
@@ -102,7 +111,8 @@ def radiation_probabilities(
         raise ValueError("masses must be non-negative")
 
     d[np.isnan(d)] = np.inf
-    np.fill_diagonal(d, np.inf)
+    if not include_self:
+        np.fill_diagonal(d, np.inf)
     probabilities = np.zeros((z, z))
 
     for i in range(z):
@@ -110,11 +120,12 @@ def radiation_probabilities(
         order = np.argsort(row, kind="stable")
         sorted_d = row[order]
         sorted_n = n[order]
-        # Destination mass within radius d_ij (ties included), less j itself.
-        # The origin sits on the (infinite) diagonal so is never counted.
-        cumulative = np.cumsum(sorted_n)
+        # Intervening mass: destination mass within radius d_ij (ties
+        # included), less j itself and never counting the origin.
+        intervening = np.where(order == i, 0.0, sorted_n)
+        cumulative = np.cumsum(intervening)
         last_tie = np.searchsorted(sorted_d, sorted_d, side="right") - 1
-        s = cumulative[last_tie] - sorted_n
+        s = cumulative[last_tie] - intervening
         reachable = np.isfinite(sorted_d) & (sorted_d <= max_impedance)
         numerator = m[i] * sorted_n
         denominator = (m[i] + s) * (m[i] + sorted_n + s)
@@ -144,6 +155,7 @@ def radiation_flows(
     max_impedance: float = np.inf,
     normalisation: str = "row",
     min_flow: float = 0.0,
+    include_self: bool = False,
 ) -> np.ndarray:
     """Dense ``Z x Z`` matrix of flows ``T_ij = T_i * P_ij``.
 
@@ -178,6 +190,7 @@ def radiation_flows(
         destination_mass,
         max_impedance=max_impedance,
         normalisation=normalisation,
+        include_self=include_self,
     )
     flows = production[:, None] * p
     if min_flow > 0:

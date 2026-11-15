@@ -5,6 +5,7 @@ from .assignment import AssignmentResult, Provenance, assign
 from .config import RunConfig, load_config
 from .constraints import (
     aggregate_od,
+    calibrate_radiation,
     common_part_of_commuters,
     od_fit,
     scale_to_aggregate,
@@ -43,6 +44,7 @@ __all__ = [
     "__version__",
     "aggregate_od",
     "assign",
+    "calibrate_radiation",
     "common_part_of_commuters",
     "compute_losses",
     "datasets",

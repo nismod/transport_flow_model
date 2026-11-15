@@ -389,6 +389,49 @@ scaling cannot create flow.
 ``common_part_of_commuters`` (CPC) is a common measure of fit between two OD
 matrices: 1 means identical, and 0 means no overlap.
 
+Trips Within a Zone
+-------------------
+
+By default a zone is never its own destination. With ``include_self=True``,
+the origin also competes as a destination, at the intrazonal impedance on the
+diagonal of the impedance matrix (for example, a mean travel time within the
+zone). The model then decides how many trips stay within the zone, rather
+than the user fixing a share. The origin's own destination mass is never
+counted as an intervening opportunity.
+
+>>> d_self = impedance.copy()
+>>> np.fill_diagonal(d_self, 1.0)
+>>> with_self = radiation_flows(
+...     d_self, [1000, 200, 0], destination_mass=[100, 300, 800], include_self=True
+... )
+>>> bool(with_self[0, 0] > 0)
+True
+
+Calibrating to Observed Aggregate Flows
+---------------------------------------
+
+The radiation model has no free parameter, and it depends only on the order
+in which destinations are ranked by impedance. What can still be chosen is
+which impedance to rank by, the ``max_impedance`` cut-off, the origin mass,
+and whether trips may stay within a zone. ``calibrate_radiation`` runs every
+combination and ranks them by fit to observed aggregate flows:
+
+>>> from transport_flow_model import calibrate_radiation
+>>> results = calibrate_radiation(
+...     {"cost": d_self},
+...     np.array([1000.0, 200.0, 0.0]),
+...     np.array([100.0, 300.0, 800.0]),
+...     districts,
+...     observed,
+...     max_impedances=[5.0, 10.0],
+...     include_self=[False, True],
+... )
+>>> list(results.columns[:4])
+['impedance', 'origin_mass', 'max_impedance', 'include_self']
+
+Use the best row's settings, then (optionally) ``scale_to_aggregate`` to
+match the observed totals exactly.
+
 Advanced: Custom Column Names
 ------------------------------
 

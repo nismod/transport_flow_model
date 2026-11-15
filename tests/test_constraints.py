@@ -18,7 +18,9 @@ GROUPS = ["a", "a", "b", "b", "c"]
 def prior():
     positions = np.array([0.0, 1.0, 5.0, 6.0, 10.0])
     d = np.abs(positions[:, None] - positions[None, :])
-    return radiation_flows(d, [100, 50, 80, 20, 60], destination_mass=[10, 60, 40, 40, 30])
+    return radiation_flows(
+        d, [100, 50, 80, 20, 60], destination_mass=[10, 60, 40, 40, 30]
+    )
 
 
 @pytest.fixture
@@ -45,7 +47,9 @@ def test_block_scaling_matches_targets_exactly(prior, targets):
 
 def test_ipf_matches_targets_and_production(prior, targets):
     production = prior.sum(axis=1)
-    scaled = scale_to_aggregate(prior, GROUPS, targets, method="ipf", tolerance=1e-9, max_iterations=500)
+    scaled = scale_to_aggregate(
+        prior, GROUPS, targets, method="ipf", tolerance=1e-9, max_iterations=500
+    )
     np.testing.assert_allclose(scaled.sum(axis=1), production, rtol=1e-6)
     np.testing.assert_allclose(aggregate_od(scaled, GROUPS)[0], targets, rtol=1e-5)
 
@@ -53,14 +57,18 @@ def test_ipf_matches_targets_and_production(prior, targets):
 def test_ipf_makes_targets_consistent_with_production(prior, targets):
     # Targets in different units (e.g. a census year with more workers) are
     # rescaled per origin group to the production.
-    scaled = scale_to_aggregate(prior, GROUPS, targets * 2, method="ipf", tolerance=1e-9, max_iterations=500)
+    scaled = scale_to_aggregate(
+        prior, GROUPS, targets * 2, method="ipf", tolerance=1e-9, max_iterations=500
+    )
     np.testing.assert_allclose(scaled.sum(), prior.sum(), rtol=1e-6)
     np.testing.assert_allclose(aggregate_od(scaled, GROUPS)[0], targets, rtol=1e-5)
 
 
 def test_unreachable_target_pairs_stay_zero():
     flows = np.array([[0.0, 1.0], [0.0, 0.0]])
-    scaled = scale_to_aggregate(flows, ["a", "b"], np.array([[0.0, 2.0], [3.0, 0.0]]), method="block")
+    scaled = scale_to_aggregate(
+        flows, ["a", "b"], np.array([[0.0, 2.0], [3.0, 0.0]]), method="block"
+    )
     assert scaled[1, 0] == 0
     assert scaled[0, 1] == 2
 
@@ -85,4 +93,41 @@ def test_od_fit(targets):
     assert metrics["cpc"] == pytest.approx(2 / 2.1)
     assert metrics["observed_internal_share"] == pytest.approx(150 / 310)
     assert len(table) == 9
-    assert set(table.columns) == {"origin", "destination", "modelled", "observed", "difference", "ratio"}
+    assert set(table.columns) == {
+        "origin",
+        "destination",
+        "modelled",
+        "observed",
+        "difference",
+        "ratio",
+    }
+
+
+def test_calibrate_radiation_ranks_settings():
+    from transport_flow_model import calibrate_radiation
+
+    positions = np.array([0.0, 1.0, 5.0, 6.0, 10.0])
+    d = np.abs(positions[:, None] - positions[None, :])
+    np.fill_diagonal(d, 0.2)
+    production = np.array([100.0, 50.0, 80.0, 20.0, 60.0])
+    jobs = np.array([10.0, 60.0, 40.0, 40.0, 30.0])
+    # Observed: generated with include_self and a 6 km cut-off, so that setting should win
+    truth = radiation_flows(
+        d, production, destination_mass=jobs, max_impedance=6.0, include_self=True
+    )
+    observed, labels = aggregate_od(truth, GROUPS)
+    results = calibrate_radiation(
+        {"distance": d, "distance_squared": d**2},
+        production,
+        jobs,
+        GROUPS,
+        observed,
+        labels,
+        max_impedances=[3.0, 6.0, 20.0],
+        include_self=[False, True],
+    )
+    assert len(results) == 2 * 3 * 2
+    best = results.iloc[0]
+    assert bool(best["include_self"]) is True
+    assert best["cpc_shares"] == pytest.approx(1.0)
+    assert list(results["cpc_shares"]) == sorted(results["cpc_shares"], reverse=True)

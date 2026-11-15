@@ -477,3 +477,27 @@ def test_performance_thousands_of_zones():
     )
     assert time.perf_counter() - start < 30
     assert t.shape == (2500, 2500)
+
+
+def test_include_self_uses_diagonal_impedance():
+    d = _line([0, 1, 2])
+    np.fill_diagonal(d, 0.5)  # intrazonal impedance, closer than any other zone
+    m = np.array([2.0, 1.0, 1.0])
+    n = np.array([3.0, 1.0, 1.0])
+    p = radiation_probabilities(d, m, n, include_self=True, normalisation="none")
+    # No zone closer than the intrazonal impedance: P_ii = n_i / (m_i + n_i)
+    assert p[0, 0] == pytest.approx(3 / 5)
+    # The origin's own mass is not an intervening opportunity for zone 1
+    assert p[0, 1] == pytest.approx(2 * 1 / ((2 + 0) * (2 + 1 + 0)))
+    # Without include_self the diagonal is ignored
+    assert radiation_probabilities(d, m, n, normalisation="none")[0, 0] == 0
+
+
+def test_include_self_keeps_production_with_row_normalisation():
+    d = _line([0, 1, 2, 3])
+    np.fill_diagonal(d, 0.3)
+    t = radiation_flows(
+        d, [100, 50, 10, 0], destination_mass=[10, 60, 80, 10], include_self=True
+    )
+    np.testing.assert_allclose(t.sum(axis=1), [100, 50, 10, 0])
+    assert (np.diag(t)[:3] > 0).all()

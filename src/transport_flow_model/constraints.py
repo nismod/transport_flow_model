@@ -9,14 +9,16 @@ example a census travel-to-work table between districts. These functions:
   keeping the fine pattern within each group pair
   (:func:`scale_to_aggregate`);
 - measure how well one OD matrix matches another
-  (:func:`common_part_of_commuters`, :func:`od_fit`).
+  (:func:`common_part_of_commuters`, :func:`od_fit`);
+- choose radiation model settings by fit to aggregate data
+  (:func:`calibrate_radiation`).
 
 All functions work on dense ``Z x Z`` arrays with one group label per zone.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -75,11 +77,17 @@ def aggregate_od(
     >>> matrix.tolist(), labels.tolist()
     ([[4.0, 6.0], [11.0, 0.0]], ['a', 'b'])
     """
-    destination_groups = origin_groups if destination_groups is None else destination_groups
+    destination_groups = (
+        origin_groups if destination_groups is None else destination_groups
+    )
     o_index, labels = _group_index(origin_groups, labels)
     d_index, _ = _group_index(destination_groups, labels)
     g = len(labels)
-    matrix = _indicator(o_index, g).T @ np.asarray(flows, dtype=float) @ _indicator(d_index, g)
+    matrix = (
+        _indicator(o_index, g).T
+        @ np.asarray(flows, dtype=float)
+        @ _indicator(d_index, g)
+    )
     return matrix, labels
 
 
@@ -152,11 +160,16 @@ def scale_to_aggregate(
     if method == "block":
         return block_scale(flows, targets)
 
-    production = flows.sum(axis=1) if production is None else np.asarray(production, dtype=float)
+    production = (
+        flows.sum(axis=1) if production is None else np.asarray(production, dtype=float)
+    )
     group_production = membership.T @ production
     row_targets = targets.sum(axis=1)
     with np.errstate(divide="ignore", invalid="ignore"):
-        consistent = targets * np.where(row_targets > 0, group_production / row_targets, 0.0)[:, None]
+        consistent = (
+            targets
+            * np.where(row_targets > 0, group_production / row_targets, 0.0)[:, None]
+        )
 
     result = flows
     for _ in range(max_iterations):
@@ -184,10 +197,16 @@ def common_part_of_commuters(modelled: np.ndarray, observed: np.ndarray) -> floa
     modelled = np.asarray(modelled, dtype=float)
     observed = np.asarray(observed, dtype=float)
     total = modelled.sum() + observed.sum()
-    return float(2.0 * np.minimum(modelled, observed).sum() / total) if total > 0 else float("nan")
+    return (
+        float(2.0 * np.minimum(modelled, observed).sum() / total)
+        if total > 0
+        else float("nan")
+    )
 
 
-def od_fit(modelled: np.ndarray, observed: np.ndarray, labels: Sequence) -> tuple[dict, pd.DataFrame]:
+def od_fit(
+    modelled: np.ndarray, observed: np.ndarray, labels: Sequence
+) -> tuple[dict, pd.DataFrame]:
     """Fit statistics and a long comparison table for two ``G x G`` OD matrices.
 
     Returns
@@ -221,7 +240,111 @@ def od_fit(modelled: np.ndarray, observed: np.ndarray, labels: Sequence) -> tupl
         "rmse": float(np.sqrt(residual / len(table))),
         "modelled_total": float(modelled.sum()),
         "observed_total": float(observed.sum()),
-        "modelled_internal_share": float(np.trace(modelled) / modelled.sum()) if modelled.sum() else float("nan"),
-        "observed_internal_share": float(np.trace(observed) / observed.sum()) if observed.sum() else float("nan"),
+        "modelled_internal_share": float(np.trace(modelled) / modelled.sum())
+        if modelled.sum()
+        else float("nan"),
+        "observed_internal_share": float(np.trace(observed) / observed.sum())
+        if observed.sum()
+        else float("nan"),
     }
     return metrics, table
+
+
+def calibrate_radiation(
+    impedances: Mapping[str, np.ndarray],
+    production: np.ndarray,
+    destination_mass: np.ndarray,
+    groups: Sequence,
+    observed: np.ndarray,
+    labels: Sequence | None = None,
+    *,
+    origin_masses: Mapping[str, np.ndarray] | None = None,
+    max_impedances: Sequence[float] = (np.inf,),
+    include_self: Sequence[bool] = (False,),
+    normalisation: str = "row",
+    metric: str = "cpc_shares",
+) -> pd.DataFrame:
+    """Grid search over radiation model settings against aggregate OD data.
+
+    Every combination of impedance matrix, origin mass, ``max_impedance``
+    and ``include_self`` is run with :func:`~transport_flow_model.radiation_flows`,
+    aggregated to groups (including flows that stay within a zone) and
+    scored against ``observed`` with :func:`od_fit`.
+
+    Parameters
+    ----------
+    impedances : mapping
+        Named ``Z x Z`` impedance matrices (e.g. ``{"time_min": ..., "length_km": ...}``).
+        For ``include_self=True`` their diagonals must hold the intrazonal
+        impedance.
+    production, destination_mass : numpy.ndarray
+        Trip production ``T_i`` and destination mass ``n_j`` per zone.
+    groups : sequence
+        Group of each zone; ``observed`` is between these groups.
+    observed : numpy.ndarray
+        ``G x G`` observed flows, in the order of ``labels``.
+    origin_masses : mapping, optional
+        Named origin masses ``m_i`` to try. Defaults to ``{"production": production}``.
+    metric : str
+        Column to rank by, higher is better (``"cpc_shares"``: CPC after
+        scaling ``observed`` to the modelled total, i.e. the pattern only;
+        or ``"cpc"`` or ``"r2"``).
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per combination: ``impedance``, ``origin_mass``,
+        ``max_impedance``, ``include_self``, the :func:`od_fit` metrics and
+        ``cpc_shares``, sorted best first.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> d = np.abs(np.subtract.outer(np.arange(4.0), np.arange(4.0)))
+    >>> observed = np.array([[30.0, 10.0], [10.0, 30.0]])
+    >>> results = calibrate_radiation(
+    ...     {"distance": d}, np.full(4, 20.0), np.full(4, 5.0), ["a", "a", "b", "b"], observed,
+    ...     max_impedances=[1.0, 3.0],
+    ... )
+    >>> results["max_impedance"].tolist()
+    [1.0, 3.0]
+    """
+    from transport_flow_model.radiation import radiation_flows
+
+    production = np.asarray(production, dtype=float)
+    origin_masses = origin_masses or {"production": production}
+    observed = np.asarray(observed, dtype=float)
+    _, labels = _group_index(groups, labels)
+    rows = []
+    for imp_name, impedance in impedances.items():
+        for mass_name, origin_mass in origin_masses.items():
+            for max_impedance in max_impedances:
+                for self_flag in include_self:
+                    flows = radiation_flows(
+                        impedance,
+                        production,
+                        origin_mass,
+                        destination_mass,
+                        max_impedance=max_impedance,
+                        normalisation=normalisation,
+                        include_self=self_flag,
+                    )
+                    modelled, _ = aggregate_od(flows, groups, labels=labels)
+                    metrics, _ = od_fit(modelled, observed, labels)
+                    scale = modelled.sum() / observed.sum() if observed.sum() else 0.0
+                    metrics["cpc_shares"] = common_part_of_commuters(
+                        modelled, observed * scale
+                    )
+                    rows.append(
+                        {
+                            "impedance": imp_name,
+                            "origin_mass": mass_name,
+                            "max_impedance": float(max_impedance),
+                            "include_self": bool(self_flag),
+                            **metrics,
+                        }
+                    )
+    results = pd.DataFrame(rows)
+    return results.sort_values(metric, ascending=False, kind="stable").reset_index(
+        drop=True
+    )

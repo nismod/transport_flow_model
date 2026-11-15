@@ -13,6 +13,10 @@ the versioning policy in the documentation).
 
 ### Added
 
+- Radiation model: `include_self` lets a zone be its own destination, at the
+  intrazonal impedance on the diagonal. `calibrate_radiation` grid-searches the
+  impedance, origin mass, `max_impedance` and `include_self` by fit to
+  aggregate observed flows.
 - OD constraints and validation (`transport_flow_model.constraints`):
   `aggregate_od` (zone OD to group totals), `scale_to_aggregate` (match
   group-to-group targets with `"block"` scaling or `"ipf"` that also keeps zone
