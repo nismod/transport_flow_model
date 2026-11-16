@@ -190,3 +190,34 @@ script CLIs. Breaking changes and deprecations are recorded in
 `CHANGELOG.md`, and the full policy (including result bit-stability across
 patch releases and the deprecation window) is documented in
 `docs/source/versioning.rst`.
+
+# Releasing
+
+The package version comes from `version` in `Cargo.toml` (maturin reads it
+and normalises it for Python: `0.2.0-rc.2` in Cargo is `0.2.0rc2` on PyPI).
+It is no longer derived from git tags (the hatch-vcs scheme used up to
+`0.2.0rc1`), so the tag only labels the release.
+
+To cut a release:
+
+1. Bump `version` in `Cargo.toml` (Cargo/semver syntax: `0.2.0`,
+   `0.3.0-rc.1`, ...), then run `cargo check` (or any cargo build) so
+   `Cargo.lock` records the new version. Commit both files.
+2. Move the `Unreleased` entries in `CHANGELOG.md` under a heading for the
+   new version and date.
+3. Optionally check the build locally:
+   `maturin build --release --sdist -o dist` and install the sdist into a
+   fresh virtual environment.
+4. Merge to `main`, then tag the merge commit `v` + the Cargo version, e.g.
+   `git tag v0.2.0-rc.2 && git push origin v0.2.0-rc.2`.
+5. Create a GitHub release from the tag (mark release candidates as
+   pre-releases). Publishing the release runs `.github/workflows/publish.yml (see ci/proposed-workflows/ until applied)`,
+   which checks that the tag matches `Cargo.toml`, builds abi3 wheels
+   (manylinux and musllinux x86_64/aarch64, macOS x86_64/arm64, Windows x64)
+   and an sdist, and uploads them to PyPI with trusted publishing (the PyPI
+   project `nismod-tfm` must list this repository and workflow, and the
+   `pypi` environment, as a trusted publisher).
+
+To test the build without publishing, run the `publish` workflow manually
+(`workflow_dispatch`): it builds and uploads the distributions as workflow
+artifacts only.

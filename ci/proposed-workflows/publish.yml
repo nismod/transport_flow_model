@@ -1,0 +1,188 @@
+name: publish
+
+# Build wheels and an sdist with maturin, and publish them to PyPI when a
+# GitHub release is published. Run manually (workflow_dispatch) for a
+# build-only dry run: the artifacts are uploaded to the run, nothing is
+# published.
+#
+# The extension uses the PyO3 stable ABI (abi3-py310 in Cargo.toml), so one
+# wheel per platform covers CPython 3.10 and later.
+#
+# Modelled on the output of `maturin generate-ci github` (maturin 1.16),
+# without its 32-bit, armv7/s390x/ppc64le and free-threaded (3.14t) builds,
+# and publishing with PyPI trusted publishing instead of an API token.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    # The release tag must be "v" + the Cargo.toml version, e.g. v0.2.0-rc.2.
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Check tag matches Cargo.toml version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::Release tag $TAG does not match Cargo.toml version $version (expected v$version)"
+            exit 1
+          fi
+
+  linux:
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - runner: ubuntu-22.04
+            target: x86_64
+            manylinux: auto
+          - runner: ubuntu-22.04
+            target: aarch64
+            manylinux: auto
+          - runner: ubuntu-22.04
+            target: x86_64
+            manylinux: musllinux_1_2
+          - runner: ubuntu-22.04
+            target: aarch64
+            manylinux: musllinux_1_2
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          manylinux: ${{ matrix.platform.manylinux }}
+          args: --release --out dist
+          sccache: ${{ github.event_name != 'release' }}
+      - name: Smoke test wheel
+        # Only the native glibc wheel can be installed on this runner.
+        if: matrix.platform.target == 'x86_64' && matrix.platform.manylinux == 'auto'
+        shell: bash
+        run: |
+          python -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          python -c "import transport_flow_model as t; print(t.__version__, t.core.version())"
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-linux-${{ matrix.platform.target }}-${{ matrix.platform.manylinux }}
+          path: dist
+
+  windows:
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - runner: windows-latest
+            target: x64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.platform.target }}
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist
+          sccache: ${{ github.event_name != 'release' }}
+      - name: Smoke test wheel
+        shell: bash
+        run: |
+          python -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          python -c "import transport_flow_model as t; print(t.__version__, t.core.version())"
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-windows-${{ matrix.platform.target }}
+          path: dist
+
+  macos:
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - runner: macos-15-intel
+            target: x86_64
+          - runner: macos-latest
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist
+          sccache: ${{ github.event_name != 'release' }}
+      - name: Smoke test wheel
+        shell: bash
+        run: |
+          python -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          python -c "import transport_flow_model as t; print(t.__version__, t.core.version())"
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-macos-${{ matrix.platform.target }}
+          path: dist
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - name: Upload sdist
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-sdist
+          path: dist
+
+  publish:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [check-version, linux, windows, macos, sdist]
+    if: github.event_name == 'release' && github.event.action == 'published'
+    environment:
+      name: pypi
+      url: https://pypi.org/p/nismod-tfm
+    permissions:
+      # PyPI trusted publishing
+      id-token: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist/
+      - name: List distributions
+        run: ls -l dist/
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

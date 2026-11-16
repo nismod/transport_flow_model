@@ -13,6 +13,21 @@ the versioning policy in the documentation).
 
 ### Added
 
+- Disruption scenarios with link cost changes: `LinkDelta(link_id, "cost",
+  value=...)` and `LinkDelta(link_id, "cost", scale=...)` (finite,
+  non-negative) are now supported alongside removals, with
+  `Scenario.from_changes(id, remove=..., cost=..., cost_scale=..., **metadata)`
+  and `Scenario.changed_links`. Flows on removed links are rerouted at the
+  changed costs. Flows on links whose cost changed keep their path by
+  default and are reported in the new `ScenarioResult.repriced` table and in
+  `losses` (initial cost is always the baseline path cost);
+  `disrupt(..., reroute_changed=True)` reroutes them instead.
+  `DisruptionResults.summary()` gains a `repriced_flow` column, and
+  `skip_unaffected` also considers changed links. `ScenarioResult.link_flows`
+  carries the scenario's link costs. `transport_flow_model.core.disrupt`
+  accepts `reroute_edges` (flows released and reallocated while the edges
+  stay available).
+
 - Radiation model: `include_self` lets a zone be its own destination, at the
   intrazonal impedance on the diagonal. `calibrate_radiation` grid-searches the
   impedance, origin mass, `max_impedance` and `include_self` by fit to
@@ -31,6 +46,19 @@ the versioning policy in the documentation).
   `radiation_flows`.
 
 ### Changed
+
+- Radiation model: `radiation_probabilities(..., include_self=True,
+  normalisation="finite")` now raises `ValueError`, because the finite-size
+  correction assumes a zone is not its own destination. Use `"row"` (the
+  `radiation_flows` default) or `"none"`.
+- Release workflow: builds abi3 wheels with maturin for manylinux and
+  musllinux (x86_64, aarch64), macOS (x86_64, arm64) and Windows (x64), plus
+  an sdist, and publishes them with PyPI trusted publishing when a GitHub
+  release is published. The previous workflow built a single
+  `linux_x86_64` wheel that PyPI rejects. The sdist now contains only the
+  files needed to build. Release steps are in `DEVELOPMENT.md`.
+- Disruption: a scenario with deltas on attributes other than `cost` still
+  raises `NotImplementedError`, now before any scenario is evaluated.
 
 - Packaging: the build backend is now maturin, so wheels and source installs
   (including `pip install git+...`) contain the Python package and the compiled

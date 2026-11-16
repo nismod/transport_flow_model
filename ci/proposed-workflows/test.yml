@@ -1,0 +1,57 @@
+name: test
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.14"]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+
+      # `pip install -e .` builds the Rust extension with maturin (the build
+      # backend); `maturin develop --release` makes the release build explicit.
+      - name: Install package, dev dependencies and Rust extension
+        run: |
+          python -m venv .venv-ci
+          . .venv-ci/bin/activate
+          echo "$PWD/.venv-ci/bin" >> "$GITHUB_PATH"
+          pip install -e .[dev]
+          maturin develop --release
+
+      - name: Run lint checks
+        run: ruff check
+
+      - name: Run Rust tests
+        if: matrix.python-version == '3.14'
+        run: cargo test
+
+      - name: Run tests
+        run: python -m pytest --cov=transport_flow_model --cov-report=term-missing -n 2 tests

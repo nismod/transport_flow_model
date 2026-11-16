@@ -24,6 +24,16 @@ While the major version is 0:
 From ``1.0.0`` onwards, breaking changes will only appear in major
 releases.
 
+Version numbers and releases
+----------------------------
+
+The version is set in ``Cargo.toml`` (for example ``0.2.0-rc.2``, published
+on PyPI as ``0.2.0rc2``) and is the same for the Python package and the Rust
+extension. Releases are tagged ``v`` plus the ``Cargo.toml`` version (for
+example ``v0.2.0-rc.2``); publishing a GitHub release from the tag builds the
+wheels and sdist and uploads them to PyPI. Versions up to ``0.2.0rc1`` were
+derived from git tags instead. See ``DEVELOPMENT.md`` for the release steps.
+
 Result stability
 ----------------
 

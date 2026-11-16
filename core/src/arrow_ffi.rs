@@ -1394,16 +1394,26 @@ mod tests {
         )
         .unwrap();
 
-        let inputs =
-            prepare_disruption_inputs_batches(&[batch.clone()], &[1], &[], &mut network).unwrap();
+        let inputs = prepare_disruption_inputs_batches(
+            std::slice::from_ref(&batch),
+            &[1],
+            &[],
+            &mut network,
+        )
+        .unwrap();
 
         assert_eq!(inputs.current_edge_flows, vec![0.0, 7.0, 7.0]);
         assert_eq!(inputs.affected_flows[0].edge_path, vec![1, 2]);
         assert_eq!(inputs.initial_costs_by_od, vec![(0, 1, 8.0)]);
 
         // A reroute edge marks the flow as affected without a failed edge.
-        let inputs =
-            prepare_disruption_inputs_batches(&[batch.clone()], &[], &[2], &mut network).unwrap();
+        let inputs = prepare_disruption_inputs_batches(
+            std::slice::from_ref(&batch),
+            &[],
+            &[2],
+            &mut network,
+        )
+        .unwrap();
         assert_eq!(inputs.affected_flows.len(), 1);
         assert_eq!(inputs.initial_costs_by_od, vec![(0, 1, 8.0)]);
         let inputs = prepare_disruption_inputs_batches(&[batch], &[], &[0], &mut network).unwrap();
