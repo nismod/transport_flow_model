@@ -18,6 +18,7 @@ All functions work on dense ``Z x Z`` arrays with one group label per zone.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Mapping, Sequence
 
 import numpy as np
@@ -261,6 +262,7 @@ def calibrate_radiation(
     origin_masses: Mapping[str, np.ndarray] | None = None,
     max_impedances: Sequence[float] = (np.inf,),
     include_self: Sequence[bool] = (False,),
+    alphas: Sequence[float | None] = (None,),
     normalisation: str = "row",
     metric: str = "cpc_shares",
 ) -> pd.DataFrame:
@@ -288,6 +290,10 @@ def calibrate_radiation(
     normalisation : {"row", "none", "finite"}
         Passed to :func:`~transport_flow_model.radiation_flows`. ``"finite"``
         cannot be combined with ``include_self=True`` (raises ``ValueError``).
+    alphas : sequence, optional
+        Values of the extended radiation model's scale parameter to try
+        (``None`` is the original model); see
+        :func:`~transport_flow_model.radiation_probabilities`.
     metric : str
         Column to rank by, higher is better (``"cpc_shares"``: CPC after
         scaling ``observed`` to the modelled total, i.e. the pattern only;
@@ -297,7 +303,7 @@ def calibrate_radiation(
     -------
     pandas.DataFrame
         One row per combination: ``impedance``, ``origin_mass``,
-        ``max_impedance``, ``include_self``, the :func:`od_fit` metrics and
+        ``max_impedance``, ``include_self``, ``alpha``, the :func:`od_fit` metrics and
         ``cpc_shares``, sorted best first.
 
     Examples
@@ -322,7 +328,7 @@ def calibrate_radiation(
     for imp_name, impedance in impedances.items():
         for mass_name, origin_mass in origin_masses.items():
             for max_impedance in max_impedances:
-                for self_flag in include_self:
+                for self_flag, alpha in itertools.product(include_self, alphas):
                     flows = radiation_flows(
                         impedance,
                         production,
@@ -331,6 +337,7 @@ def calibrate_radiation(
                         max_impedance=max_impedance,
                         normalisation=normalisation,
                         include_self=self_flag,
+                        alpha=alpha,
                     )
                     modelled, _ = aggregate_od(flows, groups, labels=labels)
                     metrics, _ = od_fit(modelled, observed, labels)
@@ -344,6 +351,7 @@ def calibrate_radiation(
                             "origin_mass": mass_name,
                             "max_impedance": float(max_impedance),
                             "include_self": bool(self_flag),
+                            "alpha": np.nan if alpha is None else float(alpha),
                             **metrics,
                         }
                     )

@@ -432,6 +432,23 @@ combination and ranks them by fit to observed aggregate flows:
 >>> list(results.columns[:4])
 ['impedance', 'origin_mass', 'max_impedance', 'include_self']
 
+For a continuous parameter to fit, pass ``alphas``: values of the scale
+parameter :math:`\alpha` of the extended radiation model (Yang et al. 2014).
+Smaller values weaken the effect of intervening opportunities, giving longer
+trips. The paper finds values near zero for zones smaller than about 10 km.
+``None`` is the original model.
+
+>>> results = calibrate_radiation(
+...     {"cost": d_self},
+...     np.array([1000.0, 200.0, 0.0]),
+...     np.array([100.0, 300.0, 800.0]),
+...     districts,
+...     observed,
+...     alphas=[None, 0.1, 0.5, 1.0],
+... )
+>>> len(results)
+4
+
 Use the best row's settings, then (optionally) ``scale_to_aggregate`` to
 match the observed totals exactly.
 

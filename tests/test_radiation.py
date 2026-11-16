@@ -516,3 +516,40 @@ def test_include_self_rejects_finite_normalisation():
         radiation_probabilities(
             d, np.ones(3), include_self=True, normalisation=normalisation
         )
+
+
+def test_alpha_one_is_close_to_original_for_large_masses():
+    d = _line(np.arange(6))
+    m = np.full(6, 5000.0)
+    original = radiation_probabilities(d, m, normalisation="row")
+    extended = radiation_probabilities(d, m, normalisation="row", alpha=1.0)
+    np.testing.assert_allclose(extended, original, rtol=1e-3)
+
+
+def test_alpha_formula_and_effect():
+    d = _line([0, 1, 2])
+    m = np.array([2.0, 1.0, 1.0])
+    n = np.array([0.0, 3.0, 4.0])
+    alpha = 0.5
+    p = radiation_probabilities(d, m, n, normalisation="none", alpha=alpha)
+    a = 2.0 + 3.0  # origin mass + intervening jobs before zone 2
+    expected = (
+        ((a + 4) ** alpha - a**alpha)
+        * (2**alpha + 1)
+        / ((a**alpha + 1) * ((a + 4) ** alpha + 1))
+    )
+    assert p[0, 2] == pytest.approx(expected)
+    # Smaller alpha sends a larger share of trips past the nearest zone.
+    near = [
+        radiation_probabilities(d, m, n, normalisation="row", alpha=x)[0, 1]
+        for x in (0.05, 0.5, 2.0)
+    ]
+    assert near[0] < near[1] < near[2]
+
+
+def test_alpha_validation():
+    d = _line([0, 1])
+    with pytest.raises(ValueError):
+        radiation_probabilities(d, np.ones(2), alpha=0.0)
+    with pytest.raises(ValueError):
+        radiation_probabilities(d, np.ones(2), alpha=0.5, normalisation="finite")

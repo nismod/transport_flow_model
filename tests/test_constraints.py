@@ -131,3 +131,28 @@ def test_calibrate_radiation_ranks_settings():
     assert bool(best["include_self"]) is True
     assert best["cpc_shares"] == pytest.approx(1.0)
     assert list(results["cpc_shares"]) == sorted(results["cpc_shares"], reverse=True)
+
+
+def test_calibrate_radiation_recovers_alpha():
+    from transport_flow_model import calibrate_radiation
+
+    rng = np.random.default_rng(1)
+    xy = rng.uniform(0, 30, size=(40, 2))
+    d = np.hypot(xy[:, None, 0] - xy[None, :, 0], xy[:, None, 1] - xy[None, :, 1])
+    production = rng.uniform(50, 500, 40)
+    jobs = rng.uniform(50, 500, 40)
+    groups = (xy[:, 0] // 10).astype(int).astype(str)
+    truth = radiation_flows(d, production, destination_mass=jobs, alpha=0.3)
+    observed, labels = aggregate_od(truth, groups)
+    results = calibrate_radiation(
+        {"distance": d},
+        production,
+        jobs,
+        groups,
+        observed,
+        labels,
+        alphas=[None, 0.05, 0.3, 1.0, 2.0],
+    )
+    assert results.iloc[0]["alpha"] == pytest.approx(0.3)
+    assert results.iloc[0]["cpc_shares"] == pytest.approx(1.0)
+    assert results["alpha"].isna().sum() == 1  # the original model row

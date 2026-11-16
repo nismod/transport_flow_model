@@ -47,6 +47,7 @@ def radiation_probabilities(
     max_impedance: float = np.inf,
     normalisation: str = "finite",
     include_self: bool = False,
+    alpha: float | None = None,
 ) -> np.ndarray:
     """Dense ``Z x Z`` matrix of radiation model probabilities ``P_ij``.
 
@@ -81,6 +82,20 @@ def radiation_probabilities(
         ignored, as in the original model. Requires ``normalisation="row"``
         or ``"none"``: the ``"finite"`` correction is derived for a model
         without trips within a zone, and raises :class:`ValueError` here.
+    alpha : float, optional
+        Scale parameter of the extended radiation model (Yang, Herrera, Eagle
+        and Gonzalez 2014, "Limits of predictability in commuting flows in
+        the absence of data for calibration", Eq. 10)::
+
+            P_ij ~ [(a + n_j)^alpha - a^alpha] (m_i^alpha + 1)
+                   / [(a^alpha + 1) ((a + n_j)^alpha + 1)],   a = m_i + s_ij
+
+        It must be positive. Smaller values weaken the effect of intervening
+        opportunities, giving longer trips; the paper finds values near zero
+        for zones smaller than about 10 km and larger values for larger
+        zones. It is meant to be calibrated, with ``normalisation="row"``
+        (the paper's Eq. 11); ``"finite"`` is not defined for it. ``None``
+        (the default) is the original parameter-free model.
 
     Returns
     -------
@@ -108,6 +123,14 @@ def radiation_probabilities(
             "finite-size correction 1 / (1 - m_i / M) assumes a zone is not its "
             'own destination; use normalisation="row" or "none"'
         )
+    if alpha is not None:
+        if not np.isfinite(alpha) or alpha <= 0:
+            raise ValueError(f"alpha must be a positive number, got {alpha!r}")
+        if normalisation == "finite":
+            raise ValueError(
+                'normalisation="finite" is not defined for the extended model '
+                '(alpha); use "row" or "none"'
+            )
     d = np.array(impedance, dtype=float)
     m = np.asarray(origin_mass, dtype=float)
     n = m if destination_mass is None else np.asarray(destination_mass, dtype=float)
@@ -136,8 +159,15 @@ def radiation_probabilities(
         last_tie = np.searchsorted(sorted_d, sorted_d, side="right") - 1
         s = cumulative[last_tie] - intervening
         reachable = np.isfinite(sorted_d) & (sorted_d <= max_impedance)
-        numerator = m[i] * sorted_n
-        denominator = (m[i] + s) * (m[i] + sorted_n + s)
+        if alpha is None:
+            numerator = m[i] * sorted_n
+            denominator = (m[i] + s) * (m[i] + sorted_n + s)
+        else:
+            # Extended radiation model (Yang et al. 2014, Eq. 10), with
+            # a = m_i + s_ij the opportunities up to (not including) j.
+            a = m[i] + s
+            numerator = ((a + sorted_n) ** alpha - a**alpha) * (m[i] ** alpha + 1.0)
+            denominator = (a**alpha + 1.0) * ((a + sorted_n) ** alpha + 1.0)
         with np.errstate(divide="ignore", invalid="ignore"):
             p = np.where(reachable & (denominator > 0), numerator / denominator, 0.0)
         probabilities[i, order] = p
@@ -165,6 +195,7 @@ def radiation_flows(
     normalisation: str = "row",
     min_flow: float = 0.0,
     include_self: bool = False,
+    alpha: float | None = None,
 ) -> np.ndarray:
     """Dense ``Z x Z`` matrix of flows ``T_ij = T_i * P_ij``.
 
@@ -200,6 +231,7 @@ def radiation_flows(
         max_impedance=max_impedance,
         normalisation=normalisation,
         include_self=include_self,
+        alpha=alpha,
     )
     flows = production[:, None] * p
     if min_flow > 0:

@@ -13,6 +13,9 @@ the versioning policy in the documentation).
 
 ### Added
 
+- Radiation model: `alpha`, the scale parameter of the extended radiation
+  model (Yang et al. 2014), in `radiation_probabilities`, `radiation_flows`
+  and as `alphas` in `calibrate_radiation`. `None` keeps the original model.
 - Disruption scenarios with link cost changes: `LinkDelta(link_id, "cost",
   value=...)` and `LinkDelta(link_id, "cost", scale=...)` (finite,
   non-negative) are now supported alongside removals, with
